@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
@@ -36,6 +37,20 @@ JOBS = [
 ]
 
 JOB_TIMEOUT = 300  # 秒。数据源偶尔会卡住，卡住比失败更难发现
+
+
+# ---------------------------------------------------------------- 命令行
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="抓取每日投研快照、汇总告警、写运行日志并按需通知。"
+    )
+    parser.add_argument("--force", action="store_true", help="忽略当天成功守卫，强制运行")
+    parser.add_argument("--dry-run", action="store_true", help="不发送通知、不提交，也不更新运行状态")
+    parser.add_argument("--heartbeat", action="store_true", help="无告警时也发送成功心跳")
+    parser.add_argument("--no-commit", action="store_true", help="不自动创建 git 提交")
+    parser.add_argument("--push", action="store_true", help="自动提交后推送当前 git 分支")
+    return parser.parse_args(argv)
 
 
 # ---------------------------------------------------------------- 当天守卫
@@ -250,11 +265,12 @@ def git_commit(results: list[dict], alerts: list[str], *, push: bool = False) ->
 # ---------------------------------------------------------------- 主流程
 
 def main(argv: list[str]) -> int:
-    dry_run = "--dry-run" in argv
-    force = "--force" in argv
-    heartbeat = "--heartbeat" in argv
-    do_commit = "--no-commit" not in argv and not dry_run
-    do_push = "--push" in argv
+    args = parse_args(argv)
+    dry_run = args.dry_run
+    force = args.force
+    heartbeat = args.heartbeat
+    do_commit = not args.no_commit and not dry_run
+    do_push = args.push
 
     if ran_today() and not force:
         print("今天已经成功跑过了，跳过。用 --force 强制重跑。")
@@ -294,7 +310,8 @@ def main(argv: list[str]) -> int:
         commit_result = git_commit(results, alerts, push=do_push)
         print(f"git：{commit_result['reason']}")
 
-    mark_run(ok=not failures)
+    if not dry_run:
+        mark_run(ok=not failures)
     return 1 if failures else 0
 
 

@@ -5,7 +5,7 @@
     "category": "利率",
     "unit": "percent",
     "why": "反映短端利率和 Fed 路径",
-    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS2']' returned non-zero exit status 6."
+    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS2']' returned non-zero exit status 22."
   },
   {
     "series_id": "DGS10",
@@ -13,7 +13,7 @@
     "category": "利率",
     "unit": "percent",
     "why": "影响全球资产估值、美元和风险偏好",
-    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10']' returned non-zero exit status 6."
+    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10']' returned non-zero exit status 22."
   },
   {
     "series_id": "DFII10",
@@ -21,7 +21,7 @@
     "category": "利率",
     "unit": "percent",
     "why": "影响黄金、比特币和高估值科技股",
-    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10']' returned non-zero exit status 6."
+    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10']' returned non-zero exit status 22."
   },
   {
     "series_id": "T10YIE",
@@ -29,7 +29,7 @@
     "category": "通胀",
     "unit": "percent",
     "why": "帮助拆分名义利率来自实际利率还是通胀预期",
-    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=T10YIE']' returned non-zero exit status 6."
+    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=T10YIE']' returned non-zero exit status 22."
   },
   {
     "series_id": "BAMLH0A0HYM2",
@@ -37,7 +37,7 @@
     "category": "信用",
     "unit": "percent",
     "why": "观察风险偏好和信用压力",
-    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2']' returned non-zero exit status 6."
+    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2']' returned non-zero exit status 22."
   },
   {
     "series_id": "WALCL",
@@ -45,6 +45,6 @@
     "category": "流动性",
     "unit": "millions_usd",
     "why": "观察 Fed 资产负债表方向",
-    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=WALCL']' returned non-zero exit status 6."
+    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=WALCL']' returned non-zero exit status 22."
   }
 ]

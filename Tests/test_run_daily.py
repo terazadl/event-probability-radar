@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import io
 import json
 import sys
 import tempfile
 import unittest
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stdout
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -19,6 +20,15 @@ import run_daily
 
 
 class RunDailyTests(unittest.TestCase):
+    def test_help_exits_before_running_jobs(self) -> None:
+        with patch.object(run_daily, "run_job") as run_job:
+            with redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit) as raised:
+                    run_daily.main(["--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        run_job.assert_not_called()
+
     def test_alerts_and_failures_share_one_notification(self) -> None:
         failures = [
             {"name": "资金流", "error": "FINRA unavailable", "ok": False}
@@ -129,13 +139,51 @@ class RunDailyTests(unittest.TestCase):
                 )
             )
             mark_run = stack.enter_context(patch.object(run_daily, "mark_run"))
-            exit_code = run_daily.main(["--dry-run"])
+            exit_code = run_daily.main(["--no-commit"])
 
         self.assertEqual(exit_code, 1)
         mark_run.assert_called_once_with(ok=False)
         pushed_body = push_mock.call_args.args[1]
         self.assertIn("测试告警", pushed_body)
         self.assertIn("FINRA unavailable", pushed_body)
+
+    def test_dry_run_does_not_mark_persistent_state(self) -> None:
+        results = [
+            {
+                "name": name,
+                "ok": True,
+                "seconds": 0.1,
+                "error": "",
+                "stdout": "snapshot",
+            }
+            for name, _ in run_daily.JOBS
+        ]
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(run_daily, "ran_today", return_value=False)
+            )
+            stack.enter_context(
+                patch.object(run_daily, "run_job", side_effect=results)
+            )
+            stack.enter_context(
+                patch.object(run_daily, "collect_alerts", return_value=[])
+            )
+            stack.enter_context(
+                patch.object(
+                    run_daily,
+                    "write_log",
+                    return_value=Path("Logs/runs/test.md"),
+                )
+            )
+            mark_run = stack.enter_context(patch.object(run_daily, "mark_run"))
+            git_commit = stack.enter_context(
+                patch.object(run_daily, "git_commit")
+            )
+            exit_code = run_daily.main(["--dry-run"])
+
+        self.assertEqual(exit_code, 0)
+        mark_run.assert_not_called()
+        git_commit.assert_not_called()
 
 
 if __name__ == "__main__":
