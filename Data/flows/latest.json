@@ -1,0 +1,100 @@
+{
+  "NETLIQ": {
+    "key": "NETLIQ",
+    "name": "美联储净流动性",
+    "latest_date": "2026-08-05",
+    "latest_value": -900.577083,
+    "error": "",
+    "changes": {
+      "28": {
+        "delta": -133.247345,
+        "pct": -17.365069852147446
+      },
+      "91": {
+        "delta": -29.523955,
+        "pct": -3.389455137804178
+      }
+    }
+  },
+  "RRPONTSYD": {
+    "key": "RRPONTSYD",
+    "name": "隔夜逆回购余额",
+    "latest_date": "2026-08-07",
+    "latest_value": 1.45,
+    "error": "",
+    "changes": {
+      "28": {
+        "delta": 0.9049999999999999,
+        "pct": 166.05504587155963
+      },
+      "91": {
+        "delta": 0.6629999999999999,
+        "pct": 84.24396442185514
+      }
+    }
+  },
+  "WRMFNS": {
+    "key": "WRMFNS",
+    "name": "零售货币基金规模",
+    "latest_date": "2026-07-06",
+    "latest_value": 3017.8,
+    "error": "",
+    "changes": {
+      "28": {
+        "delta": -13.0,
+        "pct": -0.428929655536492
+      },
+      "365": {
+        "delta": 192.10000000000036,
+        "pct": 6.798315461655532
+      }
+    }
+  },
+  "STABLECOIN": {
+    "key": "STABLECOIN",
+    "name": "稳定币总市值",
+    "latest_date": "2026-08-10",
+    "latest_value": 307.88962696998993,
+    "error": "",
+    "changes": {
+      "30": {
+        "delta": -3.370675088010046,
+        "pct": -1.0829119761574852
+      },
+      "90": {
+        "delta": -14.089796760010074,
+        "pct": -4.37599291184062
+      }
+    }
+  },
+  "BTCETF": {
+    "key": "BTCETF",
+    "name": "BTC 现货 ETF 净流入",
+    "latest_date": "2026-08-07",
+    "latest_value": 101.7,
+    "error": "",
+    "changes": {
+      "5": {
+        "delta": 865.3000000000001,
+        "pct": null
+      },
+      "20": {
+        "delta": 407.7,
+        "pct": null
+      }
+    }
+  },
+  "MARGIN": {
+    "key": "MARGIN",
+    "name": "FINRA 融资余额",
+    "latest_date": "2026-06-01",
+    "latest_value": 1502.072,
+    "error": "",
+    "changes": {
+      "365": {
+        "delta": 494.1109999999999,
+        "pct": 49.02084505253674
+      }
+    }
+  }
+}

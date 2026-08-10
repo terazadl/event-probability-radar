@@ -5,7 +5,14 @@
     "category": "利率",
     "unit": "percent",
     "why": "反映短端利率和 Fed 路径",
-    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS2']' returned non-zero exit status 22."
+    "latest_date": "2026-08-06",
+    "latest_value": 4.25,
+    "latest": "4.25%",
+    "change_7d_raw": 0.019999999999999574,
+    "change_30d_raw": 0.05999999999999961,
+    "change_7d": "+2 bp",
+    "change_30d": "+6 bp",
+    "error": ""
   },
   {
     "series_id": "DGS10",
@@ -13,7 +20,14 @@
     "category": "利率",
     "unit": "percent",
     "why": "影响全球资产估值、美元和风险偏好",
-    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10']' returned non-zero exit status 22."
+    "latest_date": "2026-08-06",
+    "latest_value": 4.69,
+    "latest": "4.69%",
+    "change_7d_raw": 0.010000000000000675,
+    "change_30d_raw": 0.14000000000000057,
+    "change_7d": "+1 bp",
+    "change_30d": "+14 bp",
+    "error": ""
   },
   {
     "series_id": "DFII10",
@@ -21,7 +35,14 @@
     "category": "利率",
     "unit": "percent",
     "why": "影响黄金、比特币和高估值科技股",
-    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10']' returned non-zero exit status 22."
+    "latest_date": "2026-08-06",
+    "latest_value": 2.43,
+    "latest": "2.43%",
+    "change_7d_raw": 0.020000000000000018,
+    "change_30d_raw": 0.13000000000000034,
+    "change_7d": "+2 bp",
+    "change_30d": "+13 bp",
+    "error": ""
   },
   {
     "series_id": "T10YIE",
@@ -29,7 +50,14 @@
     "category": "通胀",
     "unit": "percent",
     "why": "帮助拆分名义利率来自实际利率还是通胀预期",
-    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=T10YIE']' returned non-zero exit status 22."
+    "latest_date": "2026-08-07",
+    "latest_value": 2.25,
+    "latest": "2.25%",
+    "change_7d_raw": -0.029999999999999805,
+    "change_30d_raw": 0.0,
+    "change_7d": "-3 bp",
+    "change_30d": "+0 bp",
+    "error": ""
   },
   {
     "series_id": "BAMLH0A0HYM2",
@@ -37,7 +65,14 @@
     "category": "信用",
     "unit": "percent",
     "why": "观察风险偏好和信用压力",
-    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2']' returned non-zero exit status 22."
+    "latest_date": "2026-08-06",
+    "latest_value": 2.71,
+    "latest": "2.71%",
+    "change_7d_raw": -0.1299999999999999,
+    "change_30d_raw": 0.040000000000000036,
+    "change_7d": "-13 bp",
+    "change_30d": "+4 bp",
+    "error": ""
   },
   {
     "series_id": "WALCL",
@@ -45,6 +80,13 @@
     "category": "流动性",
     "unit": "millions_usd",
     "why": "观察 Fed 资产负债表方向",
-    "error": "Command '['curl', '-L', '--ipv4', '-fsSL', '--max-time', '20', 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=WALCL']' returned non-zero exit status 22."
+    "latest_date": "2026-08-05",
+    "latest_value": 6748567.0,
+    "latest": "$6.75T",
+    "change_7d_raw": 10377.0,
+    "change_30d_raw": 24003.0,
+    "change_7d": "$+0.01T",
+    "change_30d": "$+0.02T",
+    "error": ""
   }
 ]
