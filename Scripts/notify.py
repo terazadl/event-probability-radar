@@ -193,9 +193,11 @@ def main(argv: list[str]) -> int:
 
     if "--status" in argv:
         sendkey = get_sendkey()
-        print(f"SendKey: {'已配置（' + sendkey[:6] + '...）' if sendkey else '未配置'}")
         if sendkey:
-            print(f"Endpoint: {build_endpoint(sendkey)}")
+            key_type = "Server酱³" if re.match(r"^sctp\d+t", sendkey) else "Server酱 Turbo"
+            print(f"SendKey: 已配置（{key_type}）")
+        else:
+            print("SendKey: 未配置")
         print(f"State 文件: {STATE_PATH}")
         return 0
 

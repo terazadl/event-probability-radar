@@ -21,6 +21,19 @@ import run_daily
 
 
 class RunDailyTests(unittest.TestCase):
+    def test_status_never_prints_secret_or_endpoint(self) -> None:
+        secret = "SCT_TEST_SECRET_MUST_NOT_APPEAR"
+        output = io.StringIO()
+        with patch.object(notify, "get_sendkey", return_value=secret):
+            with redirect_stdout(output):
+                exit_code = notify.main(["--status"])
+
+        rendered = output.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn("SendKey: 已配置", rendered)
+        self.assertNotIn(secret, rendered)
+        self.assertNotIn("https://", rendered)
+
     def test_curl_retries_with_http1_and_only_spoofs_browser_when_requested(self) -> None:
         fred_command = fetch_flows_snapshot._curl_command(
             "https://fred.stlouisfed.org/graph/fredgraph.csv?id=WALCL"
