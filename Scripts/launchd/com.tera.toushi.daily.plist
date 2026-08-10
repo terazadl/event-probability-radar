@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tera.toushi.daily</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/tera/Desktop/My pages/ObsidianVault/00 投研系统/Scripts/run_daily.sh</string>
+    </array>
+
+    <!-- 每天 07:30。笔记本在睡眠时 launchd 会跳过这次触发， -->
+    <!-- 所以下面同时开 RunAtLoad，登录/唤醒后补跑一次； -->
+    <!-- run_daily.py 里有「当天已成功」守卫，不会重复推送。 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/tera/Desktop/My pages/ObsidianVault/00 投研系统/Logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/tera/Desktop/My pages/ObsidianVault/00 投研系统/Logs/launchd.err.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/tera/Desktop/My pages/ObsidianVault</string>
+</dict>
+</plist>

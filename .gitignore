@@ -1,0 +1,24 @@
+# 密钥。绝对不要提交。
+Scripts/.secrets.json
+
+# 原始数据：体积大、可再生、没有版本价值
+Data/fred/*.csv
+Data/flows/*.csv
+Data/**/errors-*.json
+
+# 运行时状态
+Data/run_state.json
+Data/notify_state.json
+
+# launchd 的 stdout/stderr，噪音
+Logs/launchd.*.log
+
+# 系统垃圾
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+
+# 说明：Data/**/latest.json 和 Data/**/alerts.json 是**故意**跟踪的。
+# 每天一次提交，它们的 diff 就是这套系统在持续运行的证据，
+# 也是以后写复盘时唯一可信的时间线。
