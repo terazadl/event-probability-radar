@@ -50,7 +50,7 @@
 在终端里进入 ObsidianVault，然后运行：
 
 ```bash
-python3 "00 投研系统/Scripts/fetch_fred_snapshot.py"
+.venv/bin/python3 Scripts/fetch_fred_snapshot.py
 ```
 
 运行后看：

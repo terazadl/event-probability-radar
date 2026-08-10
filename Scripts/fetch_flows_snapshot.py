@@ -9,7 +9,7 @@
 两层都要看，任何一层单独用都会系统性犯错。
 
 用法：
-    python3 "00 投研系统/Scripts/fetch_flows_snapshot.py"
+    .venv/bin/python3 Scripts/fetch_flows_snapshot.py
 
 可选依赖（只有 FINRA 融资余额需要）：
     pip3 install openpyxl
@@ -28,9 +28,9 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = ROOT / "00 投研系统" / "Data" / "flows"
-REPORT_DIR = ROOT / "00 投研系统" / "Reports"
+SYSTEM_DIR = Path(__file__).resolve().parents[1]
+DATA_DIR = SYSTEM_DIR / "Data" / "flows"
+REPORT_DIR = SYSTEM_DIR / "Reports"
 
 CURL_TIMEOUT = "60"
 CURL_RETRIES = "3"

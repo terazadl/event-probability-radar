@@ -12,8 +12,8 @@ SendKey 配置（二选一，env 优先）：
     {"serverchan_sendkey": "SCT..."}
 
 自测：
-    python3 "00 投研系统/Scripts/notify.py" --test
-    python3 "00 投研系统/Scripts/notify.py" --test --dry-run
+    .venv/bin/python3 Scripts/notify.py --test
+    .venv/bin/python3 Scripts/notify.py --test --dry-run
 """
 from __future__ import annotations
 
@@ -26,10 +26,10 @@ import sys
 from datetime import date
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_DIR = Path(__file__).resolve().parent
+SYSTEM_DIR = SCRIPT_DIR.parent
 SECRETS_PATH = SCRIPT_DIR / ".secrets.json"
-STATE_PATH = ROOT / "00 投研系统" / "Data" / "notify_state.json"
+STATE_PATH = SYSTEM_DIR / "Data" / "notify_state.json"
 
 CURL_TIMEOUT = "20"
 

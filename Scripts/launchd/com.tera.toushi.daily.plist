@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/tera/Desktop/My pages/ObsidianVault/00 投研系统/Scripts/run_daily.sh</string>
+        <string>/Users/tera/Projects/toushi-system/Scripts/run_daily.sh</string>
     </array>
 
     <!-- 每天 07:30。StartCalendarInterval 在睡眠期间错过时会在唤醒后运行； -->
@@ -26,11 +26,11 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/Users/tera/Desktop/My pages/ObsidianVault/00 投研系统/Logs/launchd.out.log</string>
+    <string>/Users/tera/Projects/toushi-system/Logs/launchd.out.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/tera/Desktop/My pages/ObsidianVault/00 投研系统/Logs/launchd.err.log</string>
+    <string>/Users/tera/Projects/toushi-system/Logs/launchd.err.log</string>
 
     <key>WorkingDirectory</key>
-    <string>/Users/tera/Desktop/My pages/ObsidianVault</string>
+    <string>/Users/tera/Projects/toushi-system</string>
 </dict>
 </plist>

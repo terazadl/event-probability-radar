@@ -12,9 +12,9 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = ROOT / "00 投研系统" / "Data" / "fred"
-REPORT_DIR = ROOT / "00 投研系统" / "Reports"
+SYSTEM_DIR = Path(__file__).resolve().parents[1]
+DATA_DIR = SYSTEM_DIR / "Data" / "fred"
+REPORT_DIR = SYSTEM_DIR / "Reports"
 
 
 @dataclass(frozen=True)

@@ -5,12 +5,12 @@
 运行日志（Logs/runs/）是这套系统唯一的存活证明，也是以后写复盘的原始素材。
 
 用法：
-    python3 "00 投研系统/Scripts/run_daily.py"               # 正常跑（当天跑过就跳过）
-    python3 "00 投研系统/Scripts/run_daily.py" --force       # 忽略「当天已跑」的守卫
-    python3 "00 投研系统/Scripts/run_daily.py" --dry-run     # 不真的推送，也不提交
-    python3 "00 投研系统/Scripts/run_daily.py" --heartbeat   # 无告警也推一条「我还活着」
-    python3 "00 投研系统/Scripts/run_daily.py" --no-commit   # 跑完不自动 git commit
-    python3 "00 投研系统/Scripts/run_daily.py" --push        # 提交后顺便 push
+    .venv/bin/python3 Scripts/run_daily.py               # 正常跑（当天跑过就跳过）
+    .venv/bin/python3 Scripts/run_daily.py --force       # 忽略「当天已跑」的守卫
+    .venv/bin/python3 Scripts/run_daily.py --dry-run     # 不真的推送，也不提交
+    .venv/bin/python3 Scripts/run_daily.py --heartbeat   # 无告警也推一条「我还活着」
+    .venv/bin/python3 Scripts/run_daily.py --no-commit   # 跑完不自动 git commit
+    .venv/bin/python3 Scripts/run_daily.py --push        # 提交后顺便 push
 """
 from __future__ import annotations
 
@@ -25,9 +25,8 @@ from typing import Optional
 
 import notify
 
-ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_DIR = Path(__file__).resolve().parent
-SYSTEM_DIR = ROOT / "00 投研系统"
+SYSTEM_DIR = SCRIPT_DIR.parent
 LOG_DIR = SYSTEM_DIR / "Logs" / "runs"
 RUN_STATE = SYSTEM_DIR / "Data" / "run_state.json"
 
@@ -87,7 +86,7 @@ def run_job(name: str, path: Path) -> dict:
             capture_output=True,
             text=True,
             timeout=JOB_TIMEOUT,
-            cwd=str(ROOT),
+            cwd=str(SYSTEM_DIR),
         )
     except subprocess.TimeoutExpired:
         return {

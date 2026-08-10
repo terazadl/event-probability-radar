@@ -3,12 +3,11 @@
 # 所以这里显式设置 PATH，并由 plist 把 stdout/stderr 写进日志。
 set -uo pipefail
 
-VAULT="/Users/tera/Desktop/My pages/ObsidianVault"
-SYSTEM_DIR="$VAULT/00 投研系统"
+SYSTEM_DIR="/Users/tera/Projects/toushi-system"
 PYTHON="$SYSTEM_DIR/.venv/bin/python3"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-cd "$VAULT" || exit 1
+cd "$SYSTEM_DIR" || exit 1
 
 if [[ ! -x "$PYTHON" ]]; then
     echo "缺少项目 Python 环境：$PYTHON" >&2
