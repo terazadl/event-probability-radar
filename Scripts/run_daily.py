@@ -5,10 +5,12 @@
 运行日志（Logs/runs/）是这套系统唯一的存活证明，也是以后写复盘的原始素材。
 
 用法：
-    python3 "00 投研系统/Scripts/run_daily.py"              # 正常跑（当天跑过就跳过）
-    python3 "00 投研系统/Scripts/run_daily.py" --force      # 忽略"当天已跑"的守卫
-    python3 "00 投研系统/Scripts/run_daily.py" --dry-run    # 不真的推送
-    python3 "00 投研系统/Scripts/run_daily.py" --heartbeat  # 无告警也推一条"我还活着"
+    python3 "00 投研系统/Scripts/run_daily.py"               # 正常跑（当天跑过就跳过）
+    python3 "00 投研系统/Scripts/run_daily.py" --force       # 忽略「当天已跑」的守卫
+    python3 "00 投研系统/Scripts/run_daily.py" --dry-run     # 不真的推送，也不提交
+    python3 "00 投研系统/Scripts/run_daily.py" --heartbeat   # 无告警也推一条「我还活着」
+    python3 "00 投研系统/Scripts/run_daily.py" --no-commit   # 跑完不自动 git commit
+    python3 "00 投研系统/Scripts/run_daily.py" --push        # 提交后顺便 push
 """
 from __future__ import annotations
 
@@ -134,12 +136,71 @@ def write_log(results: list[dict], alerts: list[str], push_result: dict) -> Path
     return log_path
 
 
+# ---------------------------------------------------------------- 自动提交
+
+# 只提交机器生成的路径。你手写的研究笔记不该被自动提交裹挟进来——
+# 那些应该由你自己决定什么时候、以什么理由入库。
+AUTO_COMMIT_PATHS = ["Data", "Reports", "Logs/runs"]
+
+
+def _git(*args: str, timeout: int = 60) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(SYSTEM_DIR), *args],
+        capture_output=True, text=True, timeout=timeout,
+    )
+
+
+def git_commit(results: list[dict], alerts: list[str], *, push: bool = False) -> dict:
+    """把当天的快照提交进版本历史。任何失败都只报告，不影响主流程。"""
+    if not (SYSTEM_DIR / ".git").exists():
+        return {"ok": False, "reason": "不是 git 仓库，跳过"}
+
+    try:
+        existing = [p for p in AUTO_COMMIT_PATHS if (SYSTEM_DIR / p).exists()]
+        if not existing:
+            return {"ok": True, "reason": "没有可提交的路径"}
+
+        add = _git("add", "--", *existing)
+        if add.returncode != 0:
+            return {"ok": False, "reason": f"git add 失败: {add.stderr.strip()[:200]}"}
+
+        # 暂存区没东西就别造空提交，否则历史会被噪音淹掉
+        if _git("diff", "--cached", "--quiet").returncode == 0:
+            return {"ok": True, "reason": "无变化，未提交"}
+
+        ok_count = sum(1 for r in results if r["ok"])
+        summary = f"auto: {date.today().isoformat()} 快照（{ok_count}/{len(results)} 成功"
+        summary += f"，{len(alerts)} 条告警）" if alerts else "，无告警）"
+        body = "\n".join(f"- {a}" for a in alerts)
+        args = ["commit", "-m", summary] + (["-m", body] if body else [])
+
+        commit = _git(*args)
+        if commit.returncode != 0:
+            return {"ok": False, "reason": f"git commit 失败: {commit.stderr.strip()[:200]}"}
+
+        result = {"ok": True, "reason": summary}
+
+        if push:
+            pushed = _git("push", timeout=120)
+            if pushed.returncode != 0:
+                result["reason"] += f"；但 push 失败: {pushed.stderr.strip()[:200]}"
+                result["push_ok"] = False
+            else:
+                result["push_ok"] = True
+        return result
+
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return {"ok": False, "reason": f"git 异常: {exc}"}
+
+
 # ---------------------------------------------------------------- 主流程
 
 def main(argv: list[str]) -> int:
     dry_run = "--dry-run" in argv
     force = "--force" in argv
     heartbeat = "--heartbeat" in argv
+    do_commit = "--no-commit" not in argv and not dry_run
+    do_push = "--push" in argv
 
     if ran_today() and not force:
         print("今天已经成功跑过了，跳过。用 --force 强制重跑。")
@@ -177,6 +238,10 @@ def main(argv: list[str]) -> int:
     print(f"日志：{log_path}")
     if not push_result.get("ok"):
         print(f"推送未成功：{push_result.get('reason')}", file=sys.stderr)
+
+    if do_commit:
+        commit_result = git_commit(results, alerts, push=do_push)
+        print(f"git：{commit_result['reason']}")
 
     mark_run(ok=not all_failed)
     return 1 if all_failed else 0
