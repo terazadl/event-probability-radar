@@ -32,7 +32,8 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "00 投研系统" / "Data" / "flows"
 REPORT_DIR = ROOT / "00 投研系统" / "Reports"
 
-CURL_TIMEOUT = "30"
+CURL_TIMEOUT = "60"
+CURL_RETRIES = "3"
 
 
 # ---------------------------------------------------------------- 数据结构
@@ -121,10 +122,21 @@ METRICS = [
 
 # ---------------------------------------------------------------- 通用工具
 
-def curl(url: str) -> str:
+def _curl_command(url: str, *, browser_user_agent: bool = False) -> list[str]:
+    command = [
+        "curl", "-L", "--http1.1", "--ipv4", "-fsSL",
+        "--connect-timeout", "15", "--max-time", CURL_TIMEOUT,
+        "--retry", CURL_RETRIES, "--retry-delay", "1", "--retry-all-errors",
+    ]
+    if browser_user_agent:
+        command.extend(["-A", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"])
+    command.append(url)
+    return command
+
+
+def curl(url: str, *, browser_user_agent: bool = False) -> str:
     result = subprocess.run(
-        ["curl", "-L", "--ipv4", "-fsSL", "--max-time", CURL_TIMEOUT,
-         "-A", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", url],
+        _curl_command(url, browser_user_agent=browser_user_agent),
         check=True,
         capture_output=True,
         text=True,
@@ -132,10 +144,9 @@ def curl(url: str) -> str:
     return result.stdout
 
 
-def curl_binary(url: str) -> bytes:
+def curl_binary(url: str, *, browser_user_agent: bool = False) -> bytes:
     result = subprocess.run(
-        ["curl", "-L", "--ipv4", "-fsSL", "--max-time", CURL_TIMEOUT,
-         "-A", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", url],
+        _curl_command(url, browser_user_agent=browser_user_agent),
         check=True,
         capture_output=True,
     )
@@ -179,7 +190,14 @@ def sum_window(observations, end: date, days: int) -> float:
 # ---------------------------------------------------------------- 各数据源
 
 def fetch_fred(series_id: str) -> list[tuple[date, float]]:
-    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
+    # The longest comparison window is one year. Limiting the response to two
+    # years makes the daily RRP series much less likely to time out. FRED also
+    # behaves more reliably without a forged browser User-Agent.
+    start = date.today() - timedelta(days=730)
+    url = (
+        "https://fred.stlouisfed.org/graph/fredgraph.csv"
+        f"?id={series_id}&cosd={start.isoformat()}&coed={date.today().isoformat()}"
+    )
     raw = curl(url)
     (DATA_DIR / f"{series_id}.csv").write_text(raw, encoding="utf-8")
     return parse_fred_csv(raw)
@@ -237,7 +255,7 @@ def _to_float(text: str):
 
 def fetch_btc_etf_flows() -> list[tuple[date, float]]:
     """Farside 日频净流入，返回单位：百万美元。HTML 抓取，脆弱。"""
-    html = curl("https://farside.co.uk/btc/")
+    html = curl("https://farside.co.uk/btc/", browser_user_agent=True)
     (DATA_DIR / "farside_btc_raw.html").write_text(html, encoding="utf-8")
     rows = re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S | re.I)
     out: list[tuple[date, float]] = []
@@ -279,7 +297,7 @@ def fetch_finra_margin() -> list[tuple[date, float]]:
     last_error = None
     for url in candidates:
         try:
-            blob = curl_binary(url)
+            blob = curl_binary(url, browser_user_agent=True)
             break
         except Exception as exc:  # noqa: BLE001
             last_error = exc
@@ -547,16 +565,20 @@ def main() -> None:
 
     # FRED 三件套先单独抓，净流动性要用
     fred_raw: dict[str, list] = {}
-    fred_error = ""
+    fred_errors: dict[str, str] = {}
     for series_id in ("WALCL", "WTREGEN", "RRPONTSYD"):
         try:
             fred_raw[series_id] = fetch_fred(series_id)
         except Exception as exc:  # noqa: BLE001
-            fred_error = f"{series_id}: {exc}"
+            fred_errors[series_id] = str(exc)
 
     def load_netliq():
-        if fred_error:
-            raise RuntimeError(fred_error)
+        if fred_errors:
+            detail = "; ".join(
+                f"{series_id}: {message}"
+                for series_id, message in fred_errors.items()
+            )
+            raise RuntimeError(detail)
         return build_net_liquidity(
             fred_raw.get("WALCL") or [],
             fred_raw.get("WTREGEN") or [],
@@ -565,7 +587,12 @@ def main() -> None:
 
     run("NETLIQ", load_netliq)
 
-    run("RRPONTSYD", lambda: fred_raw.get("RRPONTSYD") or [])
+    def load_rrp():
+        if "RRPONTSYD" in fred_errors:
+            raise RuntimeError(f"RRPONTSYD: {fred_errors['RRPONTSYD']}")
+        return fred_raw.get("RRPONTSYD") or []
+
+    run("RRPONTSYD", load_rrp)
     run("WRMFNS", lambda: fetch_fred("WRMFNS"))
     run("STABLECOIN", fetch_stablecoin_mcap)
     run("BTCETF", fetch_btc_etf_flows)
@@ -601,7 +628,7 @@ def main() -> None:
     if failed_results:
         failed_names = "、".join(row["name"] for row in failed_results)
         print(
-            f"部分资金流数据源失败（{len(failed_results)}/{len(results)}）：{failed_names}",
+            f"部分资金流指标失败（{len(failed_results)}/{len(results)}）：{failed_names}",
             file=sys.stderr,
         )
         raise SystemExit(2)

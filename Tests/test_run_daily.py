@@ -16,10 +16,24 @@ SCRIPT_DIR = PROJECT_ROOT / "Scripts"
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import notify
+import fetch_flows_snapshot
 import run_daily
 
 
 class RunDailyTests(unittest.TestCase):
+    def test_curl_retries_with_http1_and_only_spoofs_browser_when_requested(self) -> None:
+        fred_command = fetch_flows_snapshot._curl_command(
+            "https://fred.stlouisfed.org/graph/fredgraph.csv?id=WALCL"
+        )
+        browser_command = fetch_flows_snapshot._curl_command(
+            "https://farside.co.uk/btc/", browser_user_agent=True
+        )
+
+        self.assertIn("--http1.1", fred_command)
+        self.assertIn("--retry-all-errors", fred_command)
+        self.assertNotIn("-A", fred_command)
+        self.assertIn("-A", browser_command)
+
     def test_help_exits_before_running_jobs(self) -> None:
         with patch.object(run_daily, "run_job") as run_job:
             with redirect_stdout(io.StringIO()):
