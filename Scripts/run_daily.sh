@@ -1,6 +1,6 @@
 #!/bin/bash
-# launchd 调用的入口。存在的理由：launchd 的环境变量极简，
-# 直接让它跑 python3 经常会因为 PATH 找不到解释器而静默失败。
+# launchd 调用的入口。launchd 不继承交互式 shell 的完整环境，
+# 所以这里显式设置 PATH，并由 plist 把 stdout/stderr 写进日志。
 set -uo pipefail
 
 VAULT="/Users/tera/Desktop/My pages/ObsidianVault"

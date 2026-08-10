@@ -21,6 +21,7 @@ import io
 import json
 import re
 import subprocess
+import sys
 from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -595,6 +596,15 @@ def main() -> None:
     print(report_path)
     for alert in alerts:
         print("ALERT:", alert)
+
+    failed_results = [row for row in results.values() if row.get("error")]
+    if failed_results:
+        failed_names = "、".join(row["name"] for row in failed_results)
+        print(
+            f"部分资金流数据源失败（{len(failed_results)}/{len(results)}）：{failed_names}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

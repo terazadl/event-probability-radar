@@ -11,9 +11,9 @@
         <string>/Users/tera/Desktop/My pages/ObsidianVault/00 投研系统/Scripts/run_daily.sh</string>
     </array>
 
-    <!-- 每天 07:30。笔记本在睡眠时 launchd 会跳过这次触发， -->
-    <!-- 所以下面同时开 RunAtLoad，登录/唤醒后补跑一次； -->
-    <!-- run_daily.py 里有「当天已成功」守卫，不会重复推送。 -->
+    <!-- 每天 07:30。StartCalendarInterval 在睡眠期间错过时会在唤醒后运行； -->
+    <!-- 关机期间错过则不会补跑。RunAtLoad 用于 Agent 加载/用户登录时运行； -->
+    <!-- run_daily.py 只有在全部任务成功后才写「当天已成功」，避免重复执行。 -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>

@@ -4,6 +4,9 @@ Scripts/.secrets.json
 # 原始数据：体积大、可再生、没有版本价值
 Data/fred/*.csv
 Data/flows/*.csv
+Data/flows/stablecoins_raw.json
+Data/flows/farside_btc_raw.html
+Data/flows/finra_margin.xlsx
 Data/**/errors-*.json
 
 # 运行时状态

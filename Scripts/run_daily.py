@@ -20,6 +20,7 @@ import sys
 import time
 from datetime import date, datetime
 from pathlib import Path
+from typing import Optional
 
 import notify
 
@@ -104,6 +105,34 @@ def collect_alerts() -> list[str]:
     return alerts
 
 
+def build_notification(
+    alerts: list[str], failures: list[dict], *, all_failed: bool
+) -> Optional[tuple[str, str]]:
+    """Build one notification so alerts never hide collection failures."""
+    if not alerts and not failures:
+        return None
+
+    if alerts and failures:
+        title = f"⚠️ 投研系统：{len(alerts)} 条告警，{len(failures)} 项任务失败"
+    elif failures:
+        title = "❌ 投研系统抓取失败" if all_failed else "⚠️ 投研系统部分失败"
+    else:
+        title = f"⚠️ 投研系统：{alerts[0][:30]}"
+        if len(alerts) > 1:
+            title += f" 等 {len(alerts)} 条"
+
+    sections = []
+    if alerts:
+        sections.append("## 市场告警\n\n" + "\n".join(f"- {alert}" for alert in alerts))
+    if failures:
+        sections.append(
+            "## 抓取失败\n\n"
+            + "\n".join(f"- **{result['name']}**：{result['error']}" for result in failures)
+        )
+    sections.append(f"---\n\n{date.today().isoformat()} · 由投研系统自动触发")
+    return title, "\n\n".join(sections)
+
+
 # ---------------------------------------------------------------- 日志
 
 def write_log(results: list[dict], alerts: list[str], push_result: dict) -> Path:
@@ -127,9 +156,18 @@ def write_log(results: list[dict], alerts: list[str], push_result: dict) -> Path
         status = "✅" if r["ok"] else "❌"
         note = r["error"][:80] if r["error"] else ""
         rows.append(f"| {now} | {r['name']} | {status} | {r['seconds']}s | | {note} |")
-    if alerts:
-        joined = "；".join(a[:40] for a in alerts)
-        rows.append(f"| {now} | 告警推送 | {'✅' if push_result.get('ok') else '❌'} | | {len(alerts)} 条 | {joined} |")
+    failure_count = sum(1 for result in results if not result["ok"])
+    if alerts or failure_count:
+        summary_parts = []
+        if alerts:
+            summary_parts.append(f"{len(alerts)} 条告警")
+        if failure_count:
+            summary_parts.append(f"{failure_count} 项失败")
+        detail = "；".join(a[:40] for a in alerts)
+        rows.append(
+            f"| {now} | 通知 | {'✅' if push_result.get('ok') else '❌'} | | "
+            f"{'，'.join(summary_parts)} | {detail} |"
+        )
 
     with log_path.open("a", encoding="utf-8") as fh:
         fh.write("\n".join(rows) + "\n")
@@ -138,9 +176,25 @@ def write_log(results: list[dict], alerts: list[str], push_result: dict) -> Path
 
 # ---------------------------------------------------------------- 自动提交
 
-# 只提交机器生成的路径。你手写的研究笔记不该被自动提交裹挟进来——
-# 那些应该由你自己决定什么时候、以什么理由入库。
-AUTO_COMMIT_PATHS = ["Data", "Reports", "Logs/runs"]
+# 只提交明确列出的机器生成文件。不能用整个 Data/Reports 目录，否则同目录里的
+# 手写笔记仍可能被定时任务暂存。
+AUTO_COMMIT_PATHS = [
+    "Data/fred/latest.json",
+    "Data/flows/latest.json",
+    "Data/flows/alerts.json",
+]
+
+
+def auto_commit_paths() -> list[str]:
+    today = date.today().isoformat()
+    month = date.today().strftime("%Y-%m")
+    candidates = [
+        *AUTO_COMMIT_PATHS,
+        f"Reports/FRED 利率与通胀快照 {today}.md",
+        f"Reports/资金流快照 {today}.md",
+        f"Logs/runs/{month}.md",
+    ]
+    return [path for path in candidates if (SYSTEM_DIR / path).exists()]
 
 
 def _git(*args: str, timeout: int = 60) -> subprocess.CompletedProcess:
@@ -156,7 +210,7 @@ def git_commit(results: list[dict], alerts: list[str], *, push: bool = False) ->
         return {"ok": False, "reason": "不是 git 仓库，跳过"}
 
     try:
-        existing = [p for p in AUTO_COMMIT_PATHS if (SYSTEM_DIR / p).exists()]
+        existing = auto_commit_paths()
         if not existing:
             return {"ok": True, "reason": "没有可提交的路径"}
 
@@ -219,12 +273,9 @@ def main(argv: list[str]) -> int:
 
     push_result = {"ok": True, "reason": "nothing to push"}
 
-    if alerts:
-        push_result = notify.push_alerts(alerts, source="投研系统", dry_run=dry_run)
-    elif failures:
-        # 失败也要说话。沉默的定时任务和没装是一回事。
-        title = "❌ 投研系统抓取失败" if all_failed else "⚠️ 投研系统部分失败"
-        desp = "\n\n".join(f"- **{r['name']}**：{r['error']}" for r in failures)
+    notification = build_notification(alerts, failures, all_failed=all_failed)
+    if notification:
+        title, desp = notification
         push_result = notify.push(title, desp, dry_run=dry_run)
     elif heartbeat:
         push_result = notify.push(
@@ -243,8 +294,8 @@ def main(argv: list[str]) -> int:
         commit_result = git_commit(results, alerts, push=do_push)
         print(f"git：{commit_result['reason']}")
 
-    mark_run(ok=not all_failed)
-    return 1 if all_failed else 0
+    mark_run(ok=not failures)
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

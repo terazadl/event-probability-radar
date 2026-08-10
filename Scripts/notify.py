@@ -4,7 +4,7 @@
 设计原则：
 1. 只有值得打断你的事才推送。噪音一多，你就会开始忽略它，这个系统就死了。
 2. 同一条提醒当天只推一次（去重），避免 launchd 重复触发时刷屏。
-3. 推送失败绝不能让主流程挂掉——数据抓取比通知重要。
+3. 预期的配置、网络和响应错误要降级为结构化结果——数据抓取比通知重要。
 
 SendKey 配置（二选一，env 优先）：
     export SERVERCHAN_SENDKEY="SCT..."
@@ -107,7 +107,7 @@ def mark_sent(text: str) -> None:
 def push(title: str, desp: str = "", *, dry_run: bool = False, dedupe: bool = True) -> dict:
     """推一条消息。返回 {"ok": bool, "reason": str}。
 
-    永不抛异常——通知失败不应该让数据流程挂掉。
+    预期的运行时失败会转成结构化结果，不让通知服务拖垮数据流程。
     """
     key_text = f"{title}\n{desp}"
 
@@ -134,11 +134,21 @@ def push(title: str, desp: str = "", *, dry_run: bool = False, dedupe: bool = Tr
         "--data-urlencode", f"desp={desp}",
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=int(CURL_TIMEOUT) + 5,
+        )
     except FileNotFoundError:
         return {"ok": False, "reason": "找不到 curl"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "reason": "curl 进程超时"}
     except subprocess.CalledProcessError as exc:
         return {"ok": False, "reason": f"curl 失败: {exc.stderr.strip()[:200]}"}
+    except OSError as exc:
+        return {"ok": False, "reason": f"无法启动 curl: {exc}"}
 
     try:
         payload = json.loads(result.stdout)

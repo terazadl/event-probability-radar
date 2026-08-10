@@ -5,6 +5,7 @@ import csv
 import json
 import math
 import subprocess
+import sys
 from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -267,6 +268,15 @@ def main() -> None:
     report_path = REPORT_DIR / f"FRED 利率与通胀快照 {today}.md"
     report_path.write_text(build_report(rows), encoding="utf-8")
     print(report_path)
+
+    failed_rows = [row for row in rows if row.get("error")]
+    if failed_rows:
+        failed_ids = ", ".join(row["series_id"] for row in failed_rows)
+        print(
+            f"部分 FRED 数据源失败（{len(failed_rows)}/{len(rows)}）：{failed_ids}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":
