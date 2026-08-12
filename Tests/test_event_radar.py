@@ -309,11 +309,61 @@ class EventRadarTests(unittest.TestCase):
             "加息至少0.50个百分点",
         ):
             self.assertIn(label, body)
-        self.assertIn("当前五种互斥结果", body)
+        self.assertIn("五个互斥结果（合计100%）", body)
+        self.assertIn("市场现在怎么押", body)
+        self.assertIn("最后怎么判", body)
         self.assertNotIn("不降息", body)
         self.assertNotIn("归一化前五项合计", body)
-        self.assertIn("数据来源：[Polymarket]", body)
-        self.assertIn("数据截至：2026-08-12 15:00 JST", body)
+        self.assertIn("市场概率：[Polymarket]", body)
+        self.assertIn("数据时间：2026-08-12 15:00 JST", body)
+
+    def test_hormuz_notification_separates_probability_from_resolution(self) -> None:
+        config = event([{"market_id": "1", "outcome": "No", "label": "未恢复"}])
+        config.update({
+            "label_zh": "霍尔木兹海峡未恢复正常风险（8月31日前）",
+            "notification_title_zh": "霍尔木兹未恢复风险",
+            "customer_question_zh": "截至8月31日仍未恢复正常",
+            "resolution_source_name": "IMF PortWatch",
+            "resolution_metric_zh": "霍尔木兹海峡7日平均通行船次",
+            "resolution_rule_zh": "达到60即视为恢复正常",
+            "source_explainer_zh": (
+                "Polymarket负责“市场怎么押”；IMF PortWatch负责“最后发生了什么”。"
+            ),
+        })
+        snapshot = event_radar.build_snapshot(
+            config, {"1": market("1", 0.03, 0.05)}, NOW
+        )
+        title, body = event_radar.build_notification([{
+            "snapshot": snapshot,
+            "samples": [event_radar.compact_sample(snapshot)],
+            "triggers": [{"kind": "threshold_up", "threshold_pct": 75}],
+        }], "https://example.com/event-radar/")
+        self.assertIn("霍尔木兹未恢复风险：96.0%", title)
+        self.assertIn("截至8月31日仍未恢复正常：**96.0%**", body)
+        self.assertIn("判定指标：[IMF PortWatch]", body)
+        self.assertIn("7日平均通行船次", body)
+        self.assertIn("Polymarket负责", body)
+        self.assertIn("查看并分享公开快照", body)
+
+    def test_public_page_has_three_share_options_and_disclaimer(self) -> None:
+        config = distribution_event()
+        snapshot = event_radar.build_snapshot(
+            config,
+            {
+                "1": market("1", 0.01, 0.02),
+                "2": market("2", 0.00, 0.01),
+                "3": market("3", 0.61, 0.63),
+                "4": market("4", 0.34, 0.36),
+                "5": market("5", 0.00, 0.01),
+            },
+            NOW,
+        )
+        page = event_radar.build_public_page([snapshot], [], NOW)
+        self.assertIn("分享页面", page)
+        self.assertIn("复制分享摘要", page)
+        self.assertIn("下载朋友圈图片", page)
+        self.assertIn("五个互斥结果，合计100%", page)
+        self.assertIn("不是客观预测", page)
 
     def test_dry_run_does_not_write_state_or_notify(self) -> None:
         config = event([{"market_id": "1", "outcome": "Yes", "label": "Yes"}])

@@ -18,6 +18,9 @@ Data/events/history/
 
 # 高频生成的事件雷达看板：Obsidian 可见，但不进入版本历史
 Reports/事件概率雷达.md
+Reports/事件概率雷达·公开快照.html
+Reports/事件概率雷达·分享卡片.html
+Reports/事件概率雷达·分享卡片.png
 
 # launchd 的 stdout/stderr，噪音
 Logs/launchd.*.log

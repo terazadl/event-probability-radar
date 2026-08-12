@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import html
 import json
 import subprocess
 import sys
@@ -32,6 +33,8 @@ STATE_PATH = DATA_DIR / "state.json"
 LOCK_PATH = DATA_DIR / "radar.lock"
 HISTORY_DIR = DATA_DIR / "history"
 REPORT_PATH = SYSTEM_DIR / "Reports" / "事件概率雷达.md"
+PUBLIC_REPORT_PATH = SYSTEM_DIR / "Reports" / "事件概率雷达·公开快照.html"
+SHARE_CARD_PATH = SYSTEM_DIR / "Reports" / "事件概率雷达·分享卡片.html"
 
 GAMMA_MARKET_URL = "https://gamma-api.polymarket.com/markets/{market_id}"
 CURL_TIMEOUT_SECONDS = 30
@@ -274,6 +277,16 @@ def build_snapshot(event: dict, markets: dict[str, dict], now: datetime) -> dict
         "source_url": event["source_url"],
         "resolution_source_url": event["resolution_source_url"],
         "resolution_summary_zh": event["resolution_summary_zh"],
+        "notification_title_zh": event.get("notification_title_zh", event["label_zh"]),
+        "customer_question_zh": event.get("customer_question_zh", event["label_zh"]),
+        "resolution_source_name": event.get("resolution_source_name", "最终判定依据"),
+        "resolution_metric_zh": event.get(
+            "resolution_metric_zh", event["resolution_summary_zh"]
+        ),
+        "resolution_rule_zh": event.get(
+            "resolution_rule_zh", event["resolution_summary_zh"]
+        ),
+        "source_explainer_zh": event.get("source_explainer_zh", ""),
     }
     if mode == "distribution":
         snapshot.update({
@@ -552,11 +565,24 @@ def customer_timestamp(timestamp: str) -> str:
     )
 
 
-def build_notification(candidates: list[dict]) -> tuple[str, str]:
-    first = candidates[0]["snapshot"]["label_zh"]
-    title = f"📡 事件概率雷达：{first[:25]}"
-    if len(candidates) > 1:
-        title += f" 等 {len(candidates)} 项"
+def notification_headline(snapshot: dict) -> str:
+    subject = snapshot["notification_title_zh"]
+    if snapshot["mode"] == "distribution":
+        leader = snapshot["outcome_leader"]
+        return (
+            f"{subject}：{leader['label_zh']} "
+            f"{leader['display_probability_pct']:.1f}%"
+        )
+    return f"{subject}：{snapshot['probability_pct']:.1f}%"
+
+
+def build_notification(
+    candidates: list[dict], share_url: Optional[str] = None
+) -> tuple[str, str]:
+    if len(candidates) == 1:
+        title = f"事件雷达｜{notification_headline(candidates[0]['snapshot'])}"
+    else:
+        title = f"事件雷达｜{len(candidates)}项事件出现重要变化"
     sections = []
     for candidate in candidates:
         snapshot = candidate["snapshot"]
@@ -578,9 +604,9 @@ def build_notification(candidates: list[dict]) -> tuple[str, str]:
                 for row in snapshot["outcomes"]
             )
             probability_line = (
-                f"- 当前五种互斥结果：\n{outcome_lines}\n"
-                f"- 当前最可能：{snapshot['outcome_leader']['label_zh']} "
-                f"{snapshot['outcome_leader']['display_probability_pct']:.1f}%\n"
+                f"- 当前最可能：**{snapshot['outcome_leader']['label_zh']} "
+                f"{snapshot['outcome_leader']['display_probability_pct']:.1f}%**\n"
+                f"- 五个互斥结果（合计100%）：\n{outcome_lines}\n"
             )
         else:
             delta_1h = current_delta(samples, 1)
@@ -590,28 +616,238 @@ def build_notification(candidates: list[dict]) -> tuple[str, str]:
             if delta_24h is not None:
                 changes.append(f"24小时 {delta_24h:+.1f}pp")
             probability_line = (
-                f"- 当前市场隐含概率：**{snapshot['probability_pct']:.1f}%**\n"
+                f"- {snapshot['customer_question_zh']}："
+                f"**{snapshot['probability_pct']:.1f}%**\n"
             )
         change_text = "；".join(changes) if changes else "历史尚不足以计算窗口变化"
         reasons = "；".join(trigger_text(row) for row in candidate["triggers"])
+        share_line = f"\n- [查看并分享公开快照]({share_url})" if share_url else ""
+        source_explainer = (
+            f"\n\n> {snapshot['source_explainer_zh']}"
+            if snapshot.get("source_explainer_zh") else ""
+        )
         sections.append(
             f"## {snapshot['label_zh']}\n\n"
+            f"**市场现在怎么押**\n\n"
             f"{probability_line}"
-            f"- 窗口变化：{change_text}\n"
-            f"- 触发原因：{reasons}\n"
-            f"- 市场质量：{'最大分组价差' if snapshot['mode'] == 'distribution' else '价差'} "
-            f"{snapshot['spread_pp']:.2f}pp；"
-            f"流动性 {format_money(snapshot['liquidity_usd'])}；"
-            f"24小时成交 {format_money(snapshot['volume_24h_usd'])}\n"
-            f"- 数据截至：{customer_timestamp(snapshot['timestamp'])}\n"
-            f"- 数据来源：[{snapshot['source_name']}]({snapshot['source_url']})\n"
-            f"- 裁决口径：{snapshot['resolution_summary_zh']}\n"
-            f"- [最终判定依据]({snapshot['resolution_source_url']})"
+            f"- 相比此前：{change_text}\n"
+            f"- 为什么提醒：{reasons}\n\n"
+            f"**最后怎么判**\n\n"
+            f"- 市场概率：[{snapshot['source_name']}]({snapshot['source_url']})\n"
+            f"- 判定指标：[{snapshot['resolution_source_name']}]"
+            f"({snapshot['resolution_source_url']}) · {snapshot['resolution_metric_zh']}\n"
+            f"- 判定规则：{snapshot['resolution_rule_zh']}\n"
+            f"- 数据时间：{customer_timestamp(snapshot['timestamp'])}"
+            f"{share_line}{source_explainer}"
         )
     sections.append(
-        "---\n\n以上为Polymarket市场价格反映的预期，不是客观预测，也不构成交易建议。"
+        "---\n\n市场概率会变化，仅反映Polymarket参与者当时的预期；"
+        "不是事实概率，也不构成交易建议。"
     )
     return title, "\n\n".join(sections)
+
+
+def share_summary_text(snapshots: list[dict], checked_at: datetime) -> str:
+    lines = [f"事件概率雷达｜{customer_timestamp(isoformat_utc(checked_at))}"]
+    for snapshot in snapshots:
+        if snapshot["mode"] == "distribution":
+            outcomes = "；".join(
+                f"{row['label_zh']} {row['display_probability_pct']:.1f}%"
+                for row in snapshot["outcomes"]
+            )
+            lines.append(f"美联储9月：{outcomes}")
+        else:
+            lines.append(
+                f"霍尔木兹：{snapshot['customer_question_zh']} "
+                f"{snapshot['probability_pct']:.1f}%"
+            )
+    lines.extend([
+        "概率来自Polymarket；最终结果按各事件的独立判定指标确认。",
+        "仅反映市场当时预期，不构成交易建议。",
+    ])
+    return "\n".join(lines)
+
+
+def public_event_html(snapshot: dict) -> str:
+    label = html.escape(snapshot["label_zh"])
+    source_name = html.escape(snapshot["source_name"])
+    source_url = html.escape(snapshot["source_url"], quote=True)
+    resolution_name = html.escape(snapshot["resolution_source_name"])
+    resolution_url = html.escape(snapshot["resolution_source_url"], quote=True)
+    metric = html.escape(snapshot["resolution_metric_zh"])
+    rule = html.escape(snapshot["resolution_rule_zh"])
+    explainer = html.escape(snapshot.get("source_explainer_zh", ""))
+    if snapshot["mode"] == "distribution":
+        leader = snapshot["outcome_leader"]
+        rows = "".join(
+            "<li>"
+            f"<span>{html.escape(row['label_zh'])}</span>"
+            "<span class=\"radar-outcome-track\" aria-hidden=\"true\">"
+            f"<span style=\"width:{row['display_probability_pct']:.1f}%\"></span></span>"
+            f"<strong>{row['display_probability_pct']:.1f}%</strong>"
+            "</li>"
+            for row in snapshot["outcomes"]
+        )
+        headline = (
+            "<p class=\"radar-question\">当前最可能</p>"
+            f"<p class=\"radar-leader\">{html.escape(leader['label_zh'])}</p>"
+            f"<p class=\"radar-number\">{leader['display_probability_pct']:.1f}%</p>"
+            f"<ol class=\"radar-outcomes\" aria-label=\"五个互斥结果，合计100%\">{rows}</ol>"
+        )
+    else:
+        headline = (
+            f"<p class=\"radar-number\">{snapshot['probability_pct']:.1f}%</p>"
+            f"<p class=\"radar-question\">{html.escape(snapshot['customer_question_zh'])}</p>"
+        )
+    return (
+        "<article class=\"radar-event\">"
+        f"<p class=\"radar-eyebrow\">{html.escape(snapshot['notification_title_zh'])}</p>"
+        f"<h2>{label}</h2>{headline}"
+        "<dl class=\"radar-method\">"
+        f"<div><dt>市场概率</dt><dd><a href=\"{source_url}\" target=\"_blank\" "
+        f"rel=\"noopener\">{source_name}</a></dd></div>"
+        f"<div><dt>判定指标</dt><dd><a href=\"{resolution_url}\" target=\"_blank\" "
+        f"rel=\"noopener\">{resolution_name}</a><br>{metric}</dd></div>"
+        f"<div><dt>判定规则</dt><dd>{rule}</dd></div>"
+        "</dl>"
+        f"<p class=\"radar-explainer\">{explainer}</p>"
+        "</article>"
+    )
+
+
+def public_styles(*, card: bool = False) -> str:
+    canvas = (
+        "body{margin:0;width:1080px;height:1350px;overflow:hidden;}"
+        ".radar-shell{min-height:1350px;padding:58px 70px 42px;}"
+        ".radar-card .radar-head{margin-bottom:20px;}"
+        ".radar-card .radar-grid{grid-template-columns:1fr;gap:18px;}"
+        ".radar-card .radar-event{padding:21px 28px 19px;}"
+        ".radar-card .radar-event h2{font-size:25px;margin-bottom:11px;}"
+        ".radar-card .radar-number{font-size:64px;}"
+        ".radar-card .radar-question{margin-bottom:12px;}"
+        ".radar-card .radar-outcomes{margin-top:11px;}"
+        ".radar-card .radar-method{margin-top:13px;}"
+        ".radar-card .radar-method>div{grid-template-columns:90px 1fr;padding:7px 0;}"
+        ".radar-card .radar-method dt{font-size:12px;}"
+        ".radar-card .radar-method dd,.radar-card .radar-explainer{font-size:13px;}"
+        ".radar-card .radar-explainer{margin-top:11px;}"
+        if card else
+        ".event-radar-page-body .main-inner{max-width:1180px;width:calc(100% - 48px);}.radar-shell{padding:52px 0 78px;}"
+    )
+    return f"""
+<style>
+{canvas}
+.radar-shell{{box-sizing:border-box;color:#1d1c18;font-family:"Lato","PingFang SC",sans-serif;}}
+.radar-head{{align-items:end;border-bottom:1px solid #1d1c18;display:flex;gap:28px;justify-content:space-between;margin-bottom:28px;padding-bottom:18px;}}
+.radar-kicker{{color:#2f55d4;font-size:12px;font-weight:900;letter-spacing:.15em;margin:0 0 9px;text-transform:uppercase;}}
+.radar-head h1{{font-family:"Libre Caslon Display","Noto Serif SC",serif;font-size:clamp(37px,5vw,58px);font-weight:400;letter-spacing:-.035em;line-height:1;margin:0;}}
+.radar-time{{color:#706a60;font-size:13px;margin:0;text-align:right;}}
+.radar-grid{{display:grid;gap:22px;grid-template-columns:repeat(2,minmax(0,1fr));}}
+.radar-event{{background:rgba(255,255,255,.28);border:1px solid #a8a092;border-top:3px solid #2f55d4;padding:26px 28px 24px;}}
+.radar-eyebrow{{color:#2f55d4;font-size:11px;font-weight:900;letter-spacing:.12em;margin:0 0 8px;text-transform:uppercase;}}
+.radar-event h2{{font-family:"Libre Caslon Text","Noto Serif SC",serif;font-size:23px;font-weight:600;line-height:1.3;margin:0 0 18px;}}
+.radar-number{{font-family:"Libre Caslon Display",Georgia,serif;font-size:68px;letter-spacing:-.05em;line-height:.95;margin:0 0 8px;}}
+.radar-leader{{font-family:"Noto Serif SC",serif;font-size:25px;font-weight:600;line-height:1.25;margin:0 0 4px;}}
+.radar-question{{color:#45423b;font-family:"Noto Serif SC",serif;font-size:15px;line-height:1.6;margin:0 0 22px;}}
+.radar-outcomes{{border-top:1px solid #c3bcaf;list-style:none;margin:18px 0 4px;padding:11px 0 0;}}
+.radar-outcomes li{{align-items:center;display:grid;font-size:12px;gap:10px;grid-template-columns:minmax(130px,1.25fr) minmax(70px,.75fr) 45px;padding:5px 0;}}
+.radar-outcomes strong{{font-variant-numeric:tabular-nums;text-align:right;}}
+.radar-outcome-track{{background:#ded8cd;height:4px;overflow:hidden;}}
+.radar-outcome-track span{{background:#2f55d4;display:block;height:100%;}}
+.radar-method{{border-top:1px solid #a8a092;margin:22px 0 0;}}
+.radar-method>div{{border-bottom:1px solid #d2cbbf;display:grid;gap:15px;grid-template-columns:72px 1fr;padding:10px 0;}}
+.radar-method dt{{color:#706a60;font-size:11px;font-weight:900;letter-spacing:.06em;}}
+.radar-method dd{{font-family:"Noto Serif SC",serif;font-size:12px;line-height:1.55;margin:0;}}
+.radar-method a{{border-bottom:1px solid currentColor;color:#2f55d4;text-decoration:none;}}
+.radar-explainer{{color:#45423b;font-family:"Noto Serif SC",serif;font-size:12px;line-height:1.65;margin:16px 0 0;}}
+.radar-actions{{align-items:center;border-top:1px solid #1d1c18;display:flex;flex-wrap:wrap;gap:12px;margin-top:28px;padding-top:20px;}}
+.radar-action{{background:#2f55d4;border:1px solid #2f55d4;color:#fff!important;cursor:pointer;font:800 12px "Lato",sans-serif;letter-spacing:.04em;padding:12px 17px;text-decoration:none;}}
+.radar-action--secondary{{background:transparent;color:#2f55d4!important;}}
+.radar-status{{color:#706a60;font-size:12px;}}
+.radar-foot{{color:#706a60;font-family:"Noto Serif SC",serif;font-size:12px;line-height:1.65;margin:17px 0 0;}}
+@media(max-width:760px){{.radar-head{{align-items:start;flex-direction:column;gap:12px;}}.radar-time{{text-align:left;}}.radar-grid{{grid-template-columns:1fr;}}.radar-event{{padding:23px 20px;}}.radar-number{{font-size:58px;}}.radar-outcomes li{{grid-template-columns:minmax(120px,1fr) 60px 42px;}}}}
+</style>"""
+
+
+def build_public_page(
+    snapshots: list[dict], failures: list[dict], checked_at: datetime,
+    public_url: str = "https://terazadl.github.io/event-radar/",
+) -> str:
+    timestamp = customer_timestamp(isoformat_utc(checked_at))
+    cards = "".join(public_event_html(snapshot) for snapshot in snapshots)
+    summary_json = json.dumps(
+        share_summary_text(snapshots, checked_at) + f"\n{public_url}", ensure_ascii=False
+    )
+    title_json = json.dumps("事件概率雷达｜霍尔木兹与美联储", ensure_ascii=False)
+    failure_note = ""
+    if failures:
+        failure_note = (
+            f"<p class=\"radar-foot\">本次有{len(failures)}项数据未成功更新；"
+            "分享前请先检查。</p>"
+        )
+    return f"""---
+layout: page
+title: 事件概率雷达
+description: 霍尔木兹海峡风险与美联储利率决策的市场隐含概率公开快照。
+header: false
+comments: false
+toc: false
+permalink: /event-radar/
+---
+
+<script>document.body.classList.add('event-radar-page-body');</script>
+{public_styles()}
+<main class="radar-shell" aria-labelledby="radar-title">
+  <header class="radar-head">
+    <div><p class="radar-kicker">Event Probability Radar</p><h1 id="radar-title">事件概率雷达</h1></div>
+    <p class="radar-time">数据时间<br><strong>{html.escape(timestamp)}</strong></p>
+  </header>
+  <div class="radar-grid">{cards}</div>
+  {failure_note}
+  <div class="radar-actions" aria-label="分享选项">
+    <button class="radar-action" type="button" data-radar-share>分享页面</button>
+    <button class="radar-action radar-action--secondary" type="button" data-radar-copy>复制分享摘要</button>
+    <a class="radar-action radar-action--secondary" href="/images/event-radar-latest.png" download>下载朋友圈图片</a>
+    <span class="radar-status" role="status" aria-live="polite"></span>
+  </div>
+  <p class="radar-foot">概率来自Polymarket公开市场价格。Polymarket提供市场预期，IMF PortWatch或FOMC会后声明负责确认最终事实。市场概率会变化，不是客观预测，也不构成交易建议。</p>
+</main>
+<script>
+(() => {{
+  const text = {summary_json};
+  const title = {title_json};
+  const status = document.querySelector('.radar-status');
+  const setStatus = value => {{ if (status) status.textContent = value; }};
+  const copy = async () => {{
+    try {{ await navigator.clipboard.writeText(text); setStatus('摘要已复制'); }}
+    catch (_) {{ setStatus('复制失败，请手动选择文字'); }}
+  }};
+  document.querySelector('[data-radar-copy]')?.addEventListener('click', copy);
+  document.querySelector('[data-radar-share]')?.addEventListener('click', async () => {{
+    if (navigator.share) {{
+      try {{ await navigator.share({{ title, text, url: window.location.href }}); }} catch (_) {{}}
+    }} else {{ await copy(); }}
+  }});
+}})();
+</script>
+"""
+
+
+def build_share_card(snapshots: list[dict], checked_at: datetime) -> str:
+    timestamp = customer_timestamp(isoformat_utc(checked_at))
+    cards = "".join(public_event_html(snapshot) for snapshot in snapshots)
+    return f"""<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=1080">
+<title>事件概率雷达</title>{public_styles(card=True)}</head>
+<body class="radar-card" style="background:#f5f1e8"><main class="radar-shell" aria-labelledby="radar-card-title">
+  <header class="radar-head">
+    <div><p class="radar-kicker">Tera Research · Event Probability Radar</p><h1 id="radar-card-title">事件概率雷达</h1></div>
+    <p class="radar-time">数据时间<br><strong>{html.escape(timestamp)}</strong></p>
+  </header>
+  <div class="radar-grid">{cards}</div>
+  <p class="radar-foot">数据来自Polymarket公开市场价格；最终结果按IMF PortWatch或FOMC会后声明确认。市场概率会变化，不是客观预测，也不构成交易建议。</p>
+</main></body></html>
+"""
 
 
 def build_report(snapshots: list[dict], failures: list[dict], checked_at: datetime) -> str:
@@ -682,6 +918,10 @@ def append_history(payload: dict, now: datetime) -> None:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="监控两个精选事件的市场隐含概率。")
     parser.add_argument("--dry-run", action="store_true", help="只读抓取和预览，不通知、不写状态")
+    parser.add_argument(
+        "--export-share", action="store_true",
+        help="刷新公开快照与朋友圈卡片，不通知、不改监控状态",
+    )
     parser.add_argument("--config", type=Path, default=CONFIG_PATH, help="事件配置文件")
     return parser.parse_args(argv)
 
@@ -749,9 +989,30 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
             f"{format_money(snapshot['liquidity_usd'])})"
         )
 
+    public_share_url = (
+        str(config.get("public_share_url", "")).strip()
+        if config.get("public_share_enabled") else ""
+    )
+    if args.export_share:
+        REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        PUBLIC_REPORT_PATH.write_text(
+            build_public_page(
+                snapshots, failures, current_time,
+                str(config.get("public_share_url", "")).strip()
+                or "https://terazadl.github.io/event-radar/",
+            ),
+            encoding="utf-8",
+        )
+        SHARE_CARD_PATH.write_text(
+            build_share_card(snapshots, current_time), encoding="utf-8"
+        )
+        print(f"[SHARE] 公开快照：{PUBLIC_REPORT_PATH}")
+        print(f"[SHARE] 朋友圈卡片：{SHARE_CARD_PATH}")
+        return 1 if failures else 0
+
     notification_result = {"ok": True, "reason": "no alerts"}
     if candidates:
-        title, body = build_notification(candidates)
+        title, body = build_notification(candidates, public_share_url or None)
         notification_result = notify.push(title, body, dry_run=args.dry_run)
         if notification_result.get("ok") and not args.dry_run:
             for candidate in candidates:
@@ -777,6 +1038,17 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
         REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
         REPORT_PATH.write_text(
             build_report(snapshots, failures, current_time), encoding="utf-8"
+        )
+        PUBLIC_REPORT_PATH.write_text(
+            build_public_page(
+                snapshots, failures, current_time,
+                str(config.get("public_share_url", "")).strip()
+                or "https://terazadl.github.io/event-radar/",
+            ),
+            encoding="utf-8",
+        )
+        SHARE_CARD_PATH.write_text(
+            build_share_card(snapshots, current_time), encoding="utf-8"
         )
 
     for failure in failures:
