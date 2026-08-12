@@ -50,6 +50,7 @@ def event(components: list[dict]) -> dict:
         "id": "test-event",
         "label_zh": "测试事件",
         "mode": "scalar",
+        "source_name": "Polymarket",
         "source_url": "https://example.com/market",
         "resolution_source_url": "https://example.com/source",
         "resolution_summary_zh": "测试裁决规则",
@@ -299,6 +300,8 @@ class EventRadarTests(unittest.TestCase):
         self.assertIn("不变", body)
         self.assertIn("加息", body)
         self.assertIn("归一化前五项合计", body)
+        self.assertIn("数据来源：[Polymarket]", body)
+        self.assertIn("数据截至：2026-08-12 15:00 JST", body)
 
     def test_dry_run_does_not_write_state_or_notify(self) -> None:
         config = event([{"market_id": "1", "outcome": "Yes", "label": "Yes"}])

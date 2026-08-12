@@ -19,6 +19,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 import notify
 
@@ -231,6 +232,7 @@ def build_snapshot(event: dict, markets: dict[str, dict], now: datetime) -> dict
         "quality_reasons": quality_reasons,
         "rules_hash": rules_hash,
         "components": components,
+        "source_name": event["source_name"],
         "source_url": event["source_url"],
         "resolution_source_url": event["resolution_source_url"],
         "resolution_summary_zh": event["resolution_summary_zh"],
@@ -499,6 +501,12 @@ def distribution_text(snapshot: dict, separator: str = "｜") -> str:
     )
 
 
+def customer_timestamp(timestamp: str) -> str:
+    return parse_timestamp(timestamp).astimezone(ZoneInfo("Asia/Tokyo")).strftime(
+        "%Y-%m-%d %H:%M JST"
+    )
+
+
 def build_notification(candidates: list[dict]) -> tuple[str, str]:
     first = candidates[0]["snapshot"]["label_zh"]
     title = f"📡 事件概率雷达：{first[:25]}"
@@ -547,12 +555,13 @@ def build_notification(candidates: list[dict]) -> tuple[str, str]:
             f"{snapshot['spread_pp']:.2f}pp；"
             f"流动性 {format_money(snapshot['liquidity_usd'])}；"
             f"24小时成交 {format_money(snapshot['volume_24h_usd'])}\n"
+            f"- 数据截至：{customer_timestamp(snapshot['timestamp'])}\n"
+            f"- 数据来源：[{snapshot['source_name']}]({snapshot['source_url']})\n"
             f"- 裁决口径：{snapshot['resolution_summary_zh']}\n"
-            f"- [原始市场]({snapshot['source_url']}) · "
-            f"[裁决来源]({snapshot['resolution_source_url']})"
+            f"- [最终判定依据]({snapshot['resolution_source_url']})"
         )
     sections.append(
-        "---\n\n这是公开市场价格形成的隐含概率，不是客观预测，也不构成交易建议。"
+        "---\n\n以上为Polymarket市场价格反映的预期，不是客观预测，也不构成交易建议。"
     )
     return title, "\n\n".join(sections)
 
@@ -563,7 +572,7 @@ def build_report(snapshots: list[dict], failures: list[dict], checked_at: dateti
         "",
         f"最后检查：{checked_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}",
         "",
-        "> 这是公开市场价格形成的隐含概率，不是客观预测，也不构成交易建议。",
+        "> 数据来自Polymarket公开市场价格，反映市场预期，不是客观预测，也不构成交易建议。",
         "",
         "| 事件 | 当前市场隐含概率 | 价差 | 流动性 | 24h成交 | 状态 |",
         "|---|---:|---:|---:|---:|---|",
@@ -606,8 +615,8 @@ def build_report(snapshots: list[dict], failures: list[dict], checked_at: dateti
                 "",
             ])
         lines.extend([
-            f"- [原始市场]({snapshot['source_url']})",
-            f"- [裁决来源]({snapshot['resolution_source_url']})",
+            f"- 数据来源：[{snapshot['source_name']}]({snapshot['source_url']})",
+            f"- [最终判定依据]({snapshot['resolution_source_url']})",
         ])
     if failures:
         lines.extend(["", "## 抓取失败", ""])
