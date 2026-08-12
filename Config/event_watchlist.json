@@ -1,0 +1,124 @@
+{
+  "schema_version": 2,
+  "poll_interval_minutes": 15,
+  "daily_digest": {
+    "enabled": true,
+    "timezone": "Asia/Shanghai",
+    "hour": 8,
+    "minute": 0,
+    "send_window_minutes": 60
+  },
+  "public_share_enabled": false,
+  "public_share_url": "",
+  "public_image_url": "",
+  "events": [
+    {
+      "id": "hormuz_not_normal_aug31_2026",
+      "label_zh": "霍尔木兹海峡未恢复正常风险（8月31日前）",
+      "notification_title_zh": "霍尔木兹未恢复风险",
+      "customer_question_zh": "截至8月31日仍未恢复正常",
+      "mode": "scalar",
+      "source_name": "Polymarket",
+      "source_url": "https://polymarket.com/event/strait-of-hormuz-traffic-returns-to-normal-by-august-31-20260702154212320",
+      "resolution_source_url": "https://portwatch.imf.org/pages/cb5856222a5b4105adc6ee7e880a1730",
+      "resolution_summary_zh": "底层市场在 IMF PortWatch 公布霍尔木兹海峡7日平均到港船次达到60时判定“恢复正常”。雷达跟踪相反结果：截至2026-08-31仍未达到该标准的市场隐含概率。",
+      "resolution_source_name": "IMF PortWatch",
+      "resolution_metric_zh": "霍尔木兹海峡7日平均通行船次",
+      "resolution_rule_zh": "达到60即视为恢复正常；雷达显示的是截至8月31日仍未达到60的概率",
+      "source_explainer_zh": "Polymarket负责“市场怎么押”；IMF PortWatch负责“最后发生了什么”。",
+      "components": [
+        {
+          "market_id": "2774056",
+          "outcome": "No",
+          "label": "8月31日前仍未恢复正常"
+        }
+      ],
+      "quality": {
+        "min_liquidity_usd": 50000,
+        "max_spread_pp": 5
+      },
+      "triggers": {
+        "change_1h_pp": 5,
+        "change_24h_pp": 10,
+        "thresholds_pct": [25, 50, 75],
+        "confirmation_samples": 2,
+        "cooldown_hours": 6,
+        "realert_change_pp": 5
+      }
+    },
+    {
+      "id": "fed_decision_sep_2026",
+      "label_zh": "美联储9月利率决策",
+      "notification_title_zh": "美联储9月决策",
+      "customer_question_zh": "2026年9月FOMC利率决策",
+      "mode": "distribution",
+      "source_name": "Polymarket",
+      "source_url": "https://polymarket.com/event/fed-decision-in-september-762",
+      "resolution_source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+      "resolution_summary_zh": "跟踪2026年9月15–16日美联储议息会议的五个互斥结果；以会后声明中的联邦基金目标区间上限变化为准。",
+      "resolution_source_name": "FOMC会后声明",
+      "resolution_metric_zh": "联邦基金目标区间上限的变化",
+      "resolution_rule_zh": "按降息至少0.50、降息0.25、不变、加息0.25、加息至少0.50个百分点五种互斥结果判定",
+      "source_explainer_zh": "Polymarket负责“市场怎么押”；FOMC会后声明负责“最后发生了什么”。",
+      "buckets": [
+        {
+          "id": "cut",
+          "label_zh": "降息",
+          "components": [
+            {
+              "market_id": "2252242",
+              "outcome": "Yes",
+              "label": "降息至少0.50个百分点"
+            },
+            {
+              "market_id": "2252243",
+              "outcome": "Yes",
+              "label": "降息0.25个百分点"
+            }
+          ]
+        },
+        {
+          "id": "unchanged",
+          "label_zh": "不变",
+          "components": [
+            {
+              "market_id": "2252244",
+              "outcome": "Yes",
+              "label": "维持利率不变"
+            }
+          ]
+        },
+        {
+          "id": "hike",
+          "label_zh": "加息",
+          "components": [
+            {
+              "market_id": "2252245",
+              "outcome": "Yes",
+              "label": "加息0.25个百分点"
+            },
+            {
+              "market_id": "2252246",
+              "outcome": "Yes",
+              "label": "加息至少0.50个百分点"
+            }
+          ]
+        }
+      ],
+      "quality": {
+        "min_liquidity_usd": 50000,
+        "max_spread_pp": 5,
+        "min_raw_total_pct": 90,
+        "max_raw_total_pct": 110
+      },
+      "triggers": {
+        "change_1h_pp": 5,
+        "change_24h_pp": 10,
+        "thresholds_pct": [25, 50, 75],
+        "confirmation_samples": 2,
+        "cooldown_hours": 6,
+        "realert_change_pp": 5
+      }
+    }
+  ]
+}
