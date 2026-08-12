@@ -803,7 +803,7 @@ permalink: /event-radar/
     <p class="radar-time">数据时间<br><strong>{html.escape(timestamp)}</strong></p>
   </header>
   <div class="radar-grid">{cards}</div>
-  {failure_note}
+{failure_note}
   <div class="radar-actions" aria-label="分享选项">
     <button class="radar-action" type="button" data-radar-share>分享页面</button>
     <button class="radar-action radar-action--secondary" type="button" data-radar-copy>复制分享摘要</button>
