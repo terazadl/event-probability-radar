@@ -421,11 +421,17 @@ class EventRadarTests(unittest.TestCase):
                 "snapshot": hormuz,
                 "triggers": [{"kind": "threshold_up", "threshold_pct": 75}],
             }],
+            image_url="https://example.com/radar.png",
         )
         self.assertEqual(title, "Polymarket观测站早报｜8月12日")
         self.assertIn("每天北京时间08:00固定更新", body)
         self.assertIn("本次同时触发异常", body)
         self.assertIn("五个互斥结果（合计100%）", body)
+        self.assertIn(
+            "![Polymarket观测站每日快照]"
+            "(https://example.com/radar.png?v=202608121400)",
+            body,
+        )
         for row in fed["outcomes"]:
             self.assertIn(row["label_zh"], body)
 

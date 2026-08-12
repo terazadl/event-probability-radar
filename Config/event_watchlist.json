@@ -8,8 +8,9 @@
     "minute": 0,
     "send_window_minutes": 60
   },
-  "public_share_enabled": false,
+  "public_share_enabled": true,
   "public_share_url": "https://terazadl.github.io/event-radar/",
+  "public_image_url": "https://terazadl.github.io/images/event-radar-latest.png",
   "events": [
     {
       "id": "hormuz_not_normal_aug31_2026",

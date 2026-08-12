@@ -672,7 +672,7 @@ def daily_digest_due(config: dict, state: dict, now: datetime) -> bool:
 
 def build_daily_digest(
     snapshots: list[dict], checked_at: datetime, candidates: Optional[list[dict]] = None,
-    share_url: Optional[str] = None,
+    share_url: Optional[str] = None, image_url: Optional[str] = None,
 ) -> tuple[str, str]:
     local_time = checked_at.astimezone(ZoneInfo(CUSTOMER_TIMEZONE_NAME))
     title = f"{PRODUCT_NAME_ZH}早报｜{local_time.month}月{local_time.day}日"
@@ -684,6 +684,12 @@ def build_daily_digest(
         "# 今日事件概率",
         "> 每天北京时间08:00固定更新；其余时间仅在达到异常阈值时即时提醒。",
     ]
+    if image_url:
+        separator = "&" if "?" in image_url else "?"
+        cache_key = local_time.strftime("%Y%m%d%H%M")
+        sections.append(
+            f"![{PRODUCT_NAME_ZH}每日快照]({image_url}{separator}v={cache_key})"
+        )
     for snapshot in snapshots:
         triggers = trigger_map.get(snapshot["event_id"], [])
         alert_line = ""
@@ -1088,6 +1094,10 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
         str(config.get("public_share_url", "")).strip()
         if config.get("public_share_enabled") else ""
     )
+    public_image_url = (
+        str(config.get("public_image_url", "")).strip()
+        if config.get("public_share_enabled") else ""
+    )
     if args.export_share:
         REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
         PUBLIC_REPORT_PATH.write_text(
@@ -1114,7 +1124,8 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
     )
     if digest_ready:
         title, body = build_daily_digest(
-            snapshots, current_time, candidates, public_share_url or None
+            snapshots, current_time, candidates, public_share_url or None,
+            public_image_url or None,
         )
         notification_result = notify.push(title, body, dry_run=args.dry_run)
         notification_result["kind"] = "daily_digest"
