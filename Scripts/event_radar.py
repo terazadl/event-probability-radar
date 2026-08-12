@@ -34,7 +34,7 @@ REPORT_PATH = SYSTEM_DIR / "Reports" / "事件概率雷达.md"
 
 GAMMA_MARKET_URL = "https://gamma-api.polymarket.com/markets/{market_id}"
 CURL_TIMEOUT_SECONDS = 30
-STATE_VERSION = 1
+STATE_VERSION = 2
 
 
 def utc_now() -> datetime:
@@ -147,13 +147,56 @@ def component_quote(component: dict, market: dict) -> dict:
     }
 
 
+def event_components(event: dict) -> list[dict]:
+    """返回事件依赖的全部底层市场组件。"""
+    if event.get("mode", "scalar") == "distribution":
+        return [
+            component
+            for bucket in event["buckets"]
+            for component in bucket["components"]
+        ]
+    return event["components"]
+
+
 def build_snapshot(event: dict, markets: dict[str, dict], now: datetime) -> dict:
-    components = [
-        component_quote(component, markets[str(component["market_id"])])
-        for component in event["components"]
-    ]
-    probability = min(1.0, max(0.0, sum(row["probability"] for row in components)))
-    spread = sum(row["spread"] for row in components)
+    mode = event.get("mode", "scalar")
+    components = []
+    distribution = []
+    normalization_total = None
+
+    if mode == "distribution":
+        for bucket in event["buckets"]:
+            rows = [
+                component_quote(component, markets[str(component["market_id"])])
+                for component in bucket["components"]
+            ]
+            components.extend(rows)
+            distribution.append({
+                "id": bucket["id"],
+                "label_zh": bucket["label_zh"],
+                "raw_probability": sum(row["probability"] for row in rows),
+                "spread": sum(row["spread"] for row in rows),
+            })
+        normalization_total = sum(row["raw_probability"] for row in distribution)
+        if normalization_total <= 0:
+            raise ValueError("互斥结果的概率合计必须大于零")
+        for row in distribution:
+            row["probability"] = row["raw_probability"] / normalization_total
+            row["probability_pct"] = row["probability"] * 100
+            row["spread_pp"] = row.pop("spread") * 100
+        spread = max(row["spread_pp"] for row in distribution) / 100
+        leader = max(distribution, key=lambda row: row["probability"])
+    elif mode == "scalar":
+        components = [
+            component_quote(component, markets[str(component["market_id"])])
+            for component in event["components"]
+        ]
+        probability = min(1.0, max(0.0, sum(row["probability"] for row in components)))
+        spread = sum(row["spread"] for row in components)
+        leader = None
+    else:
+        raise ValueError(f"不支持的事件模式：{mode}")
+
     liquidity = sum(row["liquidity_usd"] for row in components)
     volume_24h = sum(row["volume_24h_usd"] for row in components)
     is_open = all(row["open"] for row in components)
@@ -166,15 +209,20 @@ def build_snapshot(event: dict, markets: dict[str, dict], now: datetime) -> dict
         quality_reasons.append("流动性低于门槛")
     if spread * 100 > float(quality["max_spread_pp"]):
         quality_reasons.append("买卖价差超过门槛")
+    if mode == "distribution":
+        raw_total_pct = normalization_total * 100
+        if raw_total_pct < float(quality["min_raw_total_pct"]):
+            quality_reasons.append("互斥结果原始概率合计过低")
+        if raw_total_pct > float(quality["max_raw_total_pct"]):
+            quality_reasons.append("互斥结果原始概率合计过高")
 
     rules_text = "\n".join(row["description"] for row in components)
     rules_hash = hashlib.sha256(rules_text.encode("utf-8")).hexdigest()[:16]
-    return {
+    snapshot = {
         "event_id": event["id"],
         "label_zh": event["label_zh"],
+        "mode": mode,
         "timestamp": isoformat_utc(now),
-        "probability": probability,
-        "probability_pct": probability * 100,
         "spread_pp": spread * 100,
         "liquidity_usd": liquidity,
         "volume_24h_usd": volume_24h,
@@ -187,16 +235,44 @@ def build_snapshot(event: dict, markets: dict[str, dict], now: datetime) -> dict
         "resolution_source_url": event["resolution_source_url"],
         "resolution_summary_zh": event["resolution_summary_zh"],
     }
+    if mode == "distribution":
+        snapshot.update({
+            "distribution": distribution,
+            "probabilities": {row["id"]: row["probability"] for row in distribution},
+            "normalization_total": normalization_total,
+            "leader": {
+                "id": leader["id"],
+                "label_zh": leader["label_zh"],
+                "probability": leader["probability"],
+            },
+        })
+    else:
+        snapshot.update({
+            "probability": probability,
+            "probability_pct": probability * 100,
+        })
+    return snapshot
 
 
 def compact_sample(snapshot: dict) -> dict:
-    return {
+    sample = {
         "timestamp": snapshot["timestamp"],
-        "probability": snapshot["probability"],
         "quality_ok": snapshot["quality_ok"],
         "open": snapshot["open"],
         "rules_hash": snapshot["rules_hash"],
     }
+    if snapshot["mode"] == "distribution":
+        sample["probabilities"] = snapshot["probabilities"]
+        sample["leader_id"] = snapshot["leader"]["id"]
+    else:
+        sample["probability"] = snapshot["probability"]
+    return sample
+
+
+def sample_probability(sample: dict, bucket_id: Optional[str] = None) -> Optional[float]:
+    if bucket_id is None:
+        return as_float(sample.get("probability"))
+    return as_float(sample.get("probabilities", {}).get(bucket_id))
 
 
 def reference_sample(samples: list[dict], at: datetime, hours: int) -> Optional[dict]:
@@ -212,7 +288,8 @@ def reference_sample(samples: list[dict], at: datetime, hours: int) -> Optional[
 
 
 def confirmed_change(
-    samples: list[dict], *, hours: int, threshold_pp: float, confirmations: int
+    samples: list[dict], *, hours: int, threshold_pp: float, confirmations: int,
+    bucket_id: Optional[str] = None,
 ) -> Optional[dict]:
     if len(samples) < confirmations:
         return None
@@ -225,7 +302,11 @@ def confirmed_change(
         reference = reference_sample(samples, at, hours)
         if reference is None or not reference.get("quality_ok"):
             return None
-        deltas.append((sample["probability"] - reference["probability"]) * 100)
+        current_probability = sample_probability(sample, bucket_id)
+        reference_probability = sample_probability(reference, bucket_id)
+        if current_probability is None or reference_probability is None:
+            return None
+        deltas.append((current_probability - reference_probability) * 100)
     if all(delta >= threshold_pp for delta in deltas):
         return {"kind": f"change_{hours}h_up", "delta_pp": deltas[-1]}
     if all(delta <= -threshold_pp for delta in deltas):
@@ -234,7 +315,8 @@ def confirmed_change(
 
 
 def confirmed_threshold_crossings(
-    samples: list[dict], thresholds_pct: list[float], confirmations: int
+    samples: list[dict], thresholds_pct: list[float], confirmations: int,
+    bucket_id: Optional[str] = None,
 ) -> list[dict]:
     if len(samples) < confirmations + 1:
         return []
@@ -245,21 +327,54 @@ def confirmed_threshold_crossings(
     triggers = []
     for threshold in thresholds_pct:
         boundary = float(threshold) / 100.0
-        if before["probability"] < boundary and all(row["probability"] >= boundary for row in recent):
+        before_probability = sample_probability(before, bucket_id)
+        recent_probabilities = [sample_probability(row, bucket_id) for row in recent]
+        if before_probability is None or any(value is None for value in recent_probabilities):
+            continue
+        if before_probability < boundary and all(value >= boundary for value in recent_probabilities):
             triggers.append({"kind": "threshold_up", "threshold_pct": float(threshold)})
-        elif before["probability"] > boundary and all(row["probability"] <= boundary for row in recent):
+        elif before_probability > boundary and all(value <= boundary for value in recent_probabilities):
             triggers.append({"kind": "threshold_down", "threshold_pct": float(threshold)})
     return triggers
 
 
-def current_delta(samples: list[dict], hours: int) -> Optional[float]:
+def current_delta(
+    samples: list[dict], hours: int, bucket_id: Optional[str] = None
+) -> Optional[float]:
     if not samples:
         return None
     current = samples[-1]
     reference = reference_sample(samples, parse_timestamp(current["timestamp"]), hours)
     if reference is None:
         return None
-    return (current["probability"] - reference["probability"]) * 100
+    current_probability = sample_probability(current, bucket_id)
+    reference_probability = sample_probability(reference, bucket_id)
+    if current_probability is None or reference_probability is None:
+        return None
+    return (current_probability - reference_probability) * 100
+
+
+def confirmed_leader_change(samples: list[dict], confirmations: int) -> Optional[dict]:
+    if len(samples) < confirmations + 1:
+        return None
+    before = samples[-confirmations - 1]
+    recent = samples[-confirmations:]
+    if not before.get("quality_ok") or not all(row.get("quality_ok") for row in recent):
+        return None
+    previous_leader = before.get("leader_id")
+    current_leader = recent[-1].get("leader_id")
+    if (
+        previous_leader
+        and current_leader
+        and previous_leader != current_leader
+        and all(row.get("leader_id") == current_leader for row in recent)
+    ):
+        return {
+            "kind": "leader_changed",
+            "from_bucket_id": previous_leader,
+            "bucket_id": current_leader,
+        }
+    return None
 
 
 def detect_triggers(event: dict, event_state: dict, snapshot: dict) -> tuple[list[dict], list[dict]]:
@@ -275,22 +390,45 @@ def detect_triggers(event: dict, event_state: dict, snapshot: dict) -> tuple[lis
     settings = event["triggers"]
     confirmations = int(settings["confirmation_samples"])
     if snapshot["quality_ok"]:
-        for hours, key in ((1, "change_1h_pp"), (24, "change_24h_pp")):
-            change = confirmed_change(
-                samples,
-                hours=hours,
-                threshold_pp=float(settings[key]),
-                confirmations=confirmations,
+        buckets = snapshot.get("distribution") or [{"id": None, "label_zh": None}]
+        for bucket in buckets:
+            bucket_id = bucket["id"]
+            bucket_label = bucket["label_zh"]
+            bucket_triggers = []
+            for hours, key in ((1, "change_1h_pp"), (24, "change_24h_pp")):
+                change = confirmed_change(
+                    samples,
+                    hours=hours,
+                    threshold_pp=float(settings[key]),
+                    confirmations=confirmations,
+                    bucket_id=bucket_id,
+                )
+                if change:
+                    bucket_triggers.append(change)
+            bucket_triggers.extend(
+                confirmed_threshold_crossings(
+                    samples,
+                    settings["thresholds_pct"],
+                    confirmations,
+                    bucket_id=bucket_id,
+                )
             )
-            if change:
-                triggers.append(change)
-        triggers.extend(
-            confirmed_threshold_crossings(
-                samples,
-                settings["thresholds_pct"],
-                confirmations,
-            )
-        )
+            for trigger in bucket_triggers:
+                if bucket_id is not None:
+                    trigger["bucket_id"] = bucket_id
+                    trigger["bucket_label"] = bucket_label
+                triggers.append(trigger)
+        if snapshot["mode"] == "distribution":
+            leader_change = confirmed_leader_change(samples, confirmations)
+            if leader_change:
+                labels = {row["id"]: row["label_zh"] for row in snapshot["distribution"]}
+                leader_change["from_bucket_label"] = labels.get(
+                    leader_change["from_bucket_id"], leader_change["from_bucket_id"]
+                )
+                leader_change["bucket_label"] = labels.get(
+                    leader_change["bucket_id"], leader_change["bucket_id"]
+                )
+                triggers.append(leader_change)
 
     if previous.get("rules_hash") != snapshot["rules_hash"]:
         triggers.append({"kind": "rules_changed"})
@@ -301,13 +439,16 @@ def detect_triggers(event: dict, event_state: dict, snapshot: dict) -> tuple[lis
 
 def trigger_text(trigger: dict) -> str:
     kind = trigger["kind"]
+    prefix = f"{trigger['bucket_label']}：" if trigger.get("bucket_label") else ""
     if kind.startswith("change_"):
         window = "1小时" if "1h" in kind else "24小时"
-        return f"{window}变化 {trigger['delta_pp']:+.1f} 个百分点"
+        return f"{prefix}{window}变化 {trigger['delta_pp']:+.1f} 个百分点"
     if kind == "threshold_up":
-        return f"向上突破 {trigger['threshold_pct']:.0f}%"
+        return f"{prefix}向上突破 {trigger['threshold_pct']:.0f}%"
     if kind == "threshold_down":
-        return f"向下跌破 {trigger['threshold_pct']:.0f}%"
+        return f"{prefix}向下跌破 {trigger['threshold_pct']:.0f}%"
+    if kind == "leader_changed":
+        return f"领先结果由{trigger['from_bucket_label']}变为{trigger['bucket_label']}"
     if kind == "rules_changed":
         return "底层市场裁决规则发生变化"
     if kind == "market_closed":
@@ -327,10 +468,19 @@ def cooldown_allows(event: dict, event_state: dict, snapshot: dict, triggers: li
     cooldown = timedelta(hours=float(event["triggers"]["cooldown_hours"]))
     if elapsed >= cooldown:
         return True
-    previous_probability = as_float(event_state.get("last_alert_probability"))
-    if previous_probability is None:
-        return False
-    moved_pp = abs(snapshot["probability"] - previous_probability) * 100
+    if snapshot["mode"] == "distribution":
+        previous_probabilities = event_state.get("last_alert_probabilities", {})
+        if not previous_probabilities:
+            return False
+        moved_pp = max(
+            abs(probability - as_float(previous_probabilities.get(bucket_id), probability)) * 100
+            for bucket_id, probability in snapshot["probabilities"].items()
+        )
+    else:
+        previous_probability = as_float(event_state.get("last_alert_probability"))
+        if previous_probability is None:
+            return False
+        moved_pp = abs(snapshot["probability"] - previous_probability) * 100
     return moved_pp >= float(event["triggers"]["realert_change_pp"])
 
 
@@ -342,6 +492,13 @@ def format_money(value: float) -> str:
     return f"${value:.0f}"
 
 
+def distribution_text(snapshot: dict, separator: str = "｜") -> str:
+    return separator.join(
+        f"{row['label_zh']} {row['probability_pct']:.1f}%"
+        for row in snapshot["distribution"]
+    )
+
+
 def build_notification(candidates: list[dict]) -> tuple[str, str]:
     first = candidates[0]["snapshot"]["label_zh"]
     title = f"📡 事件概率雷达：{first[:25]}"
@@ -351,21 +508,43 @@ def build_notification(candidates: list[dict]) -> tuple[str, str]:
     for candidate in candidates:
         snapshot = candidate["snapshot"]
         samples = candidate["samples"]
-        delta_1h = current_delta(samples, 1)
-        delta_24h = current_delta(samples, 24)
         changes = []
-        if delta_1h is not None:
-            changes.append(f"1小时 {delta_1h:+.1f}pp")
-        if delta_24h is not None:
-            changes.append(f"24小时 {delta_24h:+.1f}pp")
+        if snapshot["mode"] == "distribution":
+            for bucket in snapshot["distribution"]:
+                delta_1h = current_delta(samples, 1, bucket["id"])
+                delta_24h = current_delta(samples, 24, bucket["id"])
+                bucket_changes = []
+                if delta_1h is not None:
+                    bucket_changes.append(f"1小时 {delta_1h:+.1f}pp")
+                if delta_24h is not None:
+                    bucket_changes.append(f"24小时 {delta_24h:+.1f}pp")
+                if bucket_changes:
+                    changes.append(f"{bucket['label_zh']} " + "、".join(bucket_changes))
+            probability_line = (
+                f"- 当前完整分布：**{distribution_text(snapshot)}**\n"
+                f"- 当前领先结果：{snapshot['leader']['label_zh']} "
+                f"{snapshot['leader']['probability'] * 100:.1f}%\n"
+                f"- 归一化前五项合计：{snapshot['normalization_total'] * 100:.2f}%\n"
+            )
+        else:
+            delta_1h = current_delta(samples, 1)
+            delta_24h = current_delta(samples, 24)
+            if delta_1h is not None:
+                changes.append(f"1小时 {delta_1h:+.1f}pp")
+            if delta_24h is not None:
+                changes.append(f"24小时 {delta_24h:+.1f}pp")
+            probability_line = (
+                f"- 当前市场隐含概率：**{snapshot['probability_pct']:.1f}%**\n"
+            )
         change_text = "；".join(changes) if changes else "历史尚不足以计算窗口变化"
         reasons = "；".join(trigger_text(row) for row in candidate["triggers"])
         sections.append(
             f"## {snapshot['label_zh']}\n\n"
-            f"- 当前市场隐含概率：**{snapshot['probability_pct']:.1f}%**\n"
+            f"{probability_line}"
             f"- 窗口变化：{change_text}\n"
             f"- 触发原因：{reasons}\n"
-            f"- 市场质量：价差 {snapshot['spread_pp']:.2f}pp；"
+            f"- 市场质量：{'最大分组价差' if snapshot['mode'] == 'distribution' else '价差'} "
+            f"{snapshot['spread_pp']:.2f}pp；"
             f"流动性 {format_money(snapshot['liquidity_usd'])}；"
             f"24小时成交 {format_money(snapshot['volume_24h_usd'])}\n"
             f"- 裁决口径：{snapshot['resolution_summary_zh']}\n"
@@ -386,14 +565,19 @@ def build_report(snapshots: list[dict], failures: list[dict], checked_at: dateti
         "",
         "> 这是公开市场价格形成的隐含概率，不是客观预测，也不构成交易建议。",
         "",
-        "| 事件 | 当前概率 | 价差 | 流动性 | 24h成交 | 状态 |",
+        "| 事件 | 当前市场隐含概率 | 价差 | 流动性 | 24h成交 | 状态 |",
         "|---|---:|---:|---:|---:|---|",
     ]
     for snapshot in snapshots:
         status = "正常" if snapshot["quality_ok"] else "；".join(snapshot["quality_reasons"])
+        probability_text = (
+            distribution_text(snapshot, " / ")
+            if snapshot["mode"] == "distribution"
+            else f"{snapshot['probability_pct']:.1f}%"
+        )
         lines.append(
             f"| [{snapshot['label_zh']}]({snapshot['source_url']}) | "
-            f"{snapshot['probability_pct']:.1f}% | {snapshot['spread_pp']:.2f}pp | "
+            f"{probability_text} | {snapshot['spread_pp']:.2f}pp | "
             f"{format_money(snapshot['liquidity_usd'])} | "
             f"{format_money(snapshot['volume_24h_usd'])} | {status} |"
         )
@@ -404,6 +588,24 @@ def build_report(snapshots: list[dict], failures: list[dict], checked_at: dateti
             "",
             snapshot["resolution_summary_zh"],
             "",
+        ])
+        if snapshot["mode"] == "distribution":
+            lines.extend([
+                "| 结果 | 归一化概率 | 原始中点合计 |",
+                "|---|---:|---:|",
+            ])
+            lines.extend(
+                f"| {row['label_zh']} | {row['probability_pct']:.1f}% | "
+                f"{row['raw_probability'] * 100:.2f}% |"
+                for row in snapshot["distribution"]
+            )
+            lines.extend([
+                "",
+                f"五个互斥结果归一化前合计：{snapshot['normalization_total'] * 100:.2f}%。",
+                "归一化后的三项合计为100%，因此不会把加息错误归入“不变”。",
+                "",
+            ])
+        lines.extend([
             f"- [原始市场]({snapshot['source_url']})",
             f"- [裁决来源]({snapshot['resolution_source_url']})",
         ])
@@ -431,11 +633,13 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
     args = parse_args(argv)
     current_time = now or utc_now()
     config = load_json(args.config, {})
-    if config.get("schema_version") != 1 or not config.get("events"):
+    if config.get("schema_version") != 2 or not config.get("events"):
         print(f"配置无效：{args.config}", file=sys.stderr)
         return 2
 
     state = load_json(STATE_PATH, {"version": STATE_VERSION, "events": {}})
+    if state.get("version") != STATE_VERSION:
+        state = {"version": STATE_VERSION, "events": {}}
     state.setdefault("events", {})
     snapshots = []
     failures = []
@@ -445,7 +649,7 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
         try:
             markets = {
                 str(component["market_id"]): fetch_market(str(component["market_id"]))
-                for component in event["components"]
+                for component in event_components(event)
             }
             snapshot = build_snapshot(event, markets, current_time)
         except (OSError, ValueError, RuntimeError, json.JSONDecodeError,
@@ -477,8 +681,13 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
                 "event_state": event_state,
             })
 
+        current_text = (
+            distribution_text(snapshot, " | ")
+            if snapshot["mode"] == "distribution"
+            else f"{snapshot['probability_pct']:.1f}%"
+        )
         print(
-            f"[OK] {snapshot['label_zh']}：{snapshot['probability_pct']:.1f}% "
+            f"[OK] {snapshot['label_zh']}：{current_text} "
             f"(spread {snapshot['spread_pp']:.2f}pp, liquidity "
             f"{format_money(snapshot['liquidity_usd'])})"
         )
@@ -491,7 +700,10 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
             for candidate in candidates:
                 event_state = candidate["event_state"]
                 event_state["last_alert_at"] = candidate["snapshot"]["timestamp"]
-                event_state["last_alert_probability"] = candidate["snapshot"]["probability"]
+                if candidate["snapshot"]["mode"] == "distribution":
+                    event_state["last_alert_probabilities"] = candidate["snapshot"]["probabilities"]
+                else:
+                    event_state["last_alert_probability"] = candidate["snapshot"]["probability"]
                 event_state.pop("pending_alert", None)
 
     audit = {

@@ -1,10 +1,11 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "poll_interval_minutes": 15,
   "events": [
     {
       "id": "hormuz_not_normal_aug31_2026",
       "label_zh": "霍尔木兹海峡未恢复正常风险（8月31日前）",
+      "mode": "scalar",
       "source_url": "https://polymarket.com/event/strait-of-hormuz-traffic-returns-to-normal-by-august-31-20260702154212320",
       "resolution_source_url": "https://portwatch.imf.org/pages/cb5856222a5b4105adc6ee7e880a1730",
       "resolution_summary_zh": "底层市场在 IMF PortWatch 公布霍尔木兹海峡7日平均到港船次达到60时判定“恢复正常”。雷达跟踪相反结果：截至2026-08-31仍未达到该标准的市场隐含概率。",
@@ -29,26 +30,62 @@
       }
     },
     {
-      "id": "fed_cut_sep_2026",
-      "label_zh": "美联储9月会议降息概率",
+      "id": "fed_decision_sep_2026",
+      "label_zh": "美联储9月会议利率决策分布",
+      "mode": "distribution",
       "source_url": "https://polymarket.com/event/fed-decision-in-september-762",
       "resolution_source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
-      "resolution_summary_zh": "跟踪2026年9月15–16日FOMC会议降息结果的合计概率，即“降息25bp”与“降息50bp以上”两个互斥结果之和；以FOMC会后声明中的联邦基金目标区间上限变化为准。",
-      "components": [
+      "resolution_summary_zh": "跟踪2026年9月15–16日FOMC会议五个互斥结果，并归一化聚合为降息、不变、加息三项完整分布；以FOMC会后声明中的联邦基金目标区间上限变化为准。",
+      "buckets": [
         {
-          "market_id": "2252243",
-          "outcome": "Yes",
-          "label": "降息25bp"
+          "id": "cut",
+          "label_zh": "降息",
+          "components": [
+            {
+              "market_id": "2252243",
+              "outcome": "Yes",
+              "label": "降息25bp"
+            },
+            {
+              "market_id": "2252242",
+              "outcome": "Yes",
+              "label": "降息50bp以上"
+            }
+          ]
         },
         {
-          "market_id": "2252242",
-          "outcome": "Yes",
-          "label": "降息50bp以上"
+          "id": "unchanged",
+          "label_zh": "不变",
+          "components": [
+            {
+              "market_id": "2252244",
+              "outcome": "Yes",
+              "label": "利率不变"
+            }
+          ]
+        },
+        {
+          "id": "hike",
+          "label_zh": "加息",
+          "components": [
+            {
+              "market_id": "2252245",
+              "outcome": "Yes",
+              "label": "加息25bp"
+            },
+            {
+              "market_id": "2252246",
+              "outcome": "Yes",
+              "label": "加息50bp以上"
+            }
+          ]
         }
       ],
       "quality": {
         "min_liquidity_usd": 50000,
-        "max_spread_pp": 5
+        "max_spread_pp": 5,
+        "min_raw_total_pct": 90,
+        "max_raw_total_pct": 110
       },
       "triggers": {
         "change_1h_pp": 5,

@@ -49,6 +49,7 @@ def event(components: list[dict]) -> dict:
     return {
         "id": "test-event",
         "label_zh": "测试事件",
+        "mode": "scalar",
         "source_url": "https://example.com/market",
         "resolution_source_url": "https://example.com/source",
         "resolution_summary_zh": "测试裁决规则",
@@ -65,10 +66,68 @@ def event(components: list[dict]) -> dict:
     }
 
 
+def distribution_event() -> dict:
+    config = event([])
+    config.update({
+        "id": "fed-test",
+        "label_zh": "美联储测试分布",
+        "mode": "distribution",
+        "buckets": [
+            {
+                "id": "cut",
+                "label_zh": "降息",
+                "components": [
+                    {"market_id": "1", "outcome": "Yes", "label": "降息25bp"},
+                    {"market_id": "2", "outcome": "Yes", "label": "降息50bp以上"},
+                ],
+            },
+            {
+                "id": "unchanged",
+                "label_zh": "不变",
+                "components": [
+                    {"market_id": "3", "outcome": "Yes", "label": "不变"},
+                ],
+            },
+            {
+                "id": "hike",
+                "label_zh": "加息",
+                "components": [
+                    {"market_id": "4", "outcome": "Yes", "label": "加息25bp"},
+                    {"market_id": "5", "outcome": "Yes", "label": "加息50bp以上"},
+                ],
+            },
+        ],
+        "quality": {
+            "min_liquidity_usd": 50_000,
+            "max_spread_pp": 5,
+            "min_raw_total_pct": 90,
+            "max_raw_total_pct": 110,
+        },
+    })
+    config.pop("components", None)
+    return config
+
+
 def sample(at: datetime, probability: float, **extra) -> dict:
     row = {
         "timestamp": event_radar.isoformat_utc(at),
         "probability": probability,
+        "quality_ok": True,
+        "open": True,
+        "rules_hash": "same",
+    }
+    row.update(extra)
+    return row
+
+
+def distribution_sample(
+    at: datetime, cut: float, unchanged: float, hike: float, **extra
+) -> dict:
+    probabilities = {"cut": cut, "unchanged": unchanged, "hike": hike}
+    row = {
+        "timestamp": event_radar.isoformat_utc(at),
+        "probabilities": probabilities,
+        "leader_id": max(probabilities, key=probabilities.get),
         "quality_ok": True,
         "open": True,
         "rules_hash": "same",
@@ -100,6 +159,23 @@ class EventRadarTests(unittest.TestCase):
         self.assertAlmostEqual(snapshot["probability"], 0.15)
         self.assertAlmostEqual(snapshot["spread_pp"], 4.0)
         self.assertTrue(snapshot["quality_ok"])
+
+    def test_distribution_normalizes_cut_unchanged_and_hike_to_one(self) -> None:
+        snapshot = event_radar.build_snapshot(
+            distribution_event(),
+            {
+                "1": market("1", 0.01, 0.02),
+                "2": market("2", 0.00, 0.01),
+                "3": market("3", 0.61, 0.63),
+                "4": market("4", 0.34, 0.36),
+                "5": market("5", 0.00, 0.01),
+            },
+            NOW,
+        )
+        self.assertAlmostEqual(sum(snapshot["probabilities"].values()), 1.0)
+        self.assertEqual([row["label_zh"] for row in snapshot["distribution"]], ["降息", "不变", "加息"])
+        self.assertEqual(snapshot["leader"]["id"], "unchanged")
+        self.assertNotIn("probability", snapshot)
 
     def test_first_sample_only_establishes_baseline(self) -> None:
         config = event([{"market_id": "1", "outcome": "Yes", "label": "Yes"}])
@@ -146,7 +222,11 @@ class EventRadarTests(unittest.TestCase):
 
     def test_cooldown_requires_material_additional_move(self) -> None:
         config = event([{"market_id": "1", "outcome": "Yes", "label": "Yes"}])
-        snapshot = {"timestamp": event_radar.isoformat_utc(NOW), "probability": 0.52}
+        snapshot = {
+            "timestamp": event_radar.isoformat_utc(NOW),
+            "mode": "scalar",
+            "probability": 0.52,
+        }
         state = {
             "last_alert_at": event_radar.isoformat_utc(NOW - timedelta(hours=1)),
             "last_alert_probability": 0.50,
@@ -156,12 +236,76 @@ class EventRadarTests(unittest.TestCase):
         snapshot["probability"] = 0.56
         self.assertTrue(event_radar.cooldown_allows(config, state, snapshot, triggers))
 
+    def test_distribution_change_trigger_names_the_bucket(self) -> None:
+        config = distribution_event()
+        history = [
+            distribution_sample(NOW - timedelta(minutes=90), 0.10, 0.60, 0.30),
+            distribution_sample(NOW - timedelta(minutes=75), 0.10, 0.60, 0.30),
+            distribution_sample(NOW - timedelta(minutes=15), 0.17, 0.56, 0.27),
+        ]
+        snapshot = event_radar.build_snapshot(
+            config,
+            {
+                "1": market("1", 0.08, 0.09),
+                "2": market("2", 0.08, 0.09),
+                "3": market("3", 0.54, 0.56),
+                "4": market("4", 0.25, 0.27),
+                "5": market("5", 0.01, 0.02),
+            },
+            NOW,
+        )
+        triggers, _ = event_radar.detect_triggers(config, {"samples": history}, snapshot)
+        cut_changes = [
+            row for row in triggers
+            if row["kind"] == "change_1h_up" and row.get("bucket_id") == "cut"
+        ]
+        self.assertEqual(len(cut_changes), 1)
+        self.assertEqual(cut_changes[0]["bucket_label"], "降息")
+
+    def test_distribution_leader_change_requires_persistence(self) -> None:
+        rows = [
+            distribution_sample(NOW - timedelta(minutes=45), 0.10, 0.55, 0.35),
+            distribution_sample(NOW - timedelta(minutes=30), 0.10, 0.40, 0.50),
+            distribution_sample(NOW - timedelta(minutes=15), 0.10, 0.38, 0.52),
+        ]
+        trigger = event_radar.confirmed_leader_change(rows, 2)
+        self.assertEqual(trigger["from_bucket_id"], "unchanged")
+        self.assertEqual(trigger["bucket_id"], "hike")
+
+    def test_distribution_notification_always_shows_all_outcomes(self) -> None:
+        config = distribution_event()
+        snapshot = event_radar.build_snapshot(
+            config,
+            {
+                "1": market("1", 0.01, 0.02),
+                "2": market("2", 0.00, 0.01),
+                "3": market("3", 0.61, 0.63),
+                "4": market("4", 0.34, 0.36),
+                "5": market("5", 0.00, 0.01),
+            },
+            NOW,
+        )
+        _, body = event_radar.build_notification([{
+            "snapshot": snapshot,
+            "samples": [event_radar.compact_sample(snapshot)],
+            "triggers": [{
+                "kind": "threshold_up",
+                "threshold_pct": 50,
+                "bucket_id": "unchanged",
+                "bucket_label": "不变",
+            }],
+        }])
+        self.assertIn("降息", body)
+        self.assertIn("不变", body)
+        self.assertIn("加息", body)
+        self.assertIn("归一化前五项合计", body)
+
     def test_dry_run_does_not_write_state_or_notify(self) -> None:
         config = event([{"market_id": "1", "outcome": "Yes", "label": "Yes"}])
         with tempfile.TemporaryDirectory() as temporary_directory:
             config_path = Path(temporary_directory) / "events.json"
             config_path.write_text(
-                json.dumps({"schema_version": 1, "events": [config]}), encoding="utf-8"
+                json.dumps({"schema_version": 2, "events": [config]}), encoding="utf-8"
             )
             state_path = Path(temporary_directory) / "state.json"
             with patch.object(event_radar, "STATE_PATH", state_path), patch.object(
