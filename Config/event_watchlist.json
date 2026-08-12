@@ -3,7 +3,7 @@
   "poll_interval_minutes": 15,
   "daily_digest": {
     "enabled": true,
-    "timezone": "Asia/Tokyo",
+    "timezone": "Asia/Shanghai",
     "hour": 8,
     "minute": 0,
     "send_window_minutes": 60

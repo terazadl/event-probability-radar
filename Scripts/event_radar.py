@@ -39,6 +39,9 @@ SHARE_CARD_PATH = SYSTEM_DIR / "Reports" / "事件概率雷达·分享卡片.htm
 GAMMA_MARKET_URL = "https://gamma-api.polymarket.com/markets/{market_id}"
 CURL_TIMEOUT_SECONDS = 30
 STATE_VERSION = 2
+PRODUCT_NAME_ZH = "Polymarket观测站"
+CUSTOMER_TIMEZONE_NAME = "Asia/Shanghai"
+CUSTOMER_TIMEZONE_LABEL = "北京时间"
 
 
 def utc_now() -> datetime:
@@ -560,9 +563,10 @@ def distribution_text(snapshot: dict, separator: str = "｜") -> str:
 
 
 def customer_timestamp(timestamp: str) -> str:
-    return parse_timestamp(timestamp).astimezone(ZoneInfo("Asia/Tokyo")).strftime(
-        "%Y-%m-%d %H:%M JST"
+    local_time = parse_timestamp(timestamp).astimezone(
+        ZoneInfo(CUSTOMER_TIMEZONE_NAME)
     )
+    return f"{local_time.strftime('%Y-%m-%d %H:%M')}（{CUSTOMER_TIMEZONE_LABEL}）"
 
 
 def notification_headline(snapshot: dict) -> str:
@@ -580,9 +584,9 @@ def build_notification(
     candidates: list[dict], share_url: Optional[str] = None
 ) -> tuple[str, str]:
     if len(candidates) == 1:
-        title = f"事件雷达｜{notification_headline(candidates[0]['snapshot'])}"
+        title = f"{PRODUCT_NAME_ZH}｜{notification_headline(candidates[0]['snapshot'])}"
     else:
-        title = f"事件雷达｜{len(candidates)}项事件出现重要变化"
+        title = f"{PRODUCT_NAME_ZH}｜{len(candidates)}项事件出现重要变化"
     sections = []
     for candidate in candidates:
         snapshot = candidate["snapshot"]
@@ -642,7 +646,8 @@ def build_notification(
         )
     sections.append(
         "---\n\n市场概率会变化，仅反映Polymarket参与者当时的预期；"
-        "不是事实概率，也不构成交易建议。"
+        "不是事实概率，也不构成交易建议。\n\n"
+        "本产品为非官方观测工具，与Polymarket无隶属或合作关系。"
     )
     return title, "\n\n".join(sections)
 
@@ -652,7 +657,9 @@ def daily_digest_due(config: dict, state: dict, now: datetime) -> bool:
     settings = config.get("daily_digest", {})
     if not settings.get("enabled"):
         return False
-    local_time = now.astimezone(ZoneInfo(settings.get("timezone", "Asia/Tokyo")))
+    local_time = now.astimezone(
+        ZoneInfo(settings.get("timezone", CUSTOMER_TIMEZONE_NAME))
+    )
     start_minute = int(settings.get("hour", 8)) * 60 + int(settings.get("minute", 0))
     window_minutes = max(1, int(settings.get("send_window_minutes", 60)))
     current_minute = local_time.hour * 60 + local_time.minute
@@ -667,15 +674,15 @@ def build_daily_digest(
     snapshots: list[dict], checked_at: datetime, candidates: Optional[list[dict]] = None,
     share_url: Optional[str] = None,
 ) -> tuple[str, str]:
-    local_time = checked_at.astimezone(ZoneInfo("Asia/Tokyo"))
-    title = f"事件雷达早报｜{local_time.month}月{local_time.day}日"
+    local_time = checked_at.astimezone(ZoneInfo(CUSTOMER_TIMEZONE_NAME))
+    title = f"{PRODUCT_NAME_ZH}早报｜{local_time.month}月{local_time.day}日"
     trigger_map = {
         candidate["snapshot"]["event_id"]: candidate["triggers"]
         for candidate in (candidates or [])
     }
     sections = [
         "# 今日事件概率",
-        "> 每天08:00 JST固定更新；其余时间仅在达到异常阈值时即时提醒。",
+        "> 每天北京时间08:00固定更新；其余时间仅在达到异常阈值时即时提醒。",
     ]
     for snapshot in snapshots:
         triggers = trigger_map.get(snapshot["event_id"], [])
@@ -712,7 +719,8 @@ def build_daily_digest(
     sections.append(
         f"数据时间：{customer_timestamp(isoformat_utc(checked_at))}\n\n"
         "---\n\n市场概率会变化，仅反映Polymarket参与者当时的预期；"
-        "不是事实概率，也不构成交易建议。"
+        "不是事实概率，也不构成交易建议。\n\n"
+        "本产品为非官方观测工具，与Polymarket无隶属或合作关系。"
     )
     return title, "\n\n".join(sections)
 
@@ -730,7 +738,7 @@ def mark_alert_candidates_sent(candidates: list[dict]) -> None:
 
 
 def share_summary_text(snapshots: list[dict], checked_at: datetime) -> str:
-    lines = [f"事件概率雷达｜{customer_timestamp(isoformat_utc(checked_at))}"]
+    lines = [f"{PRODUCT_NAME_ZH}｜{customer_timestamp(isoformat_utc(checked_at))}"]
     for snapshot in snapshots:
         if snapshot["mode"] == "distribution":
             outcomes = "；".join(
@@ -746,6 +754,7 @@ def share_summary_text(snapshots: list[dict], checked_at: datetime) -> str:
     lines.extend([
         "概率来自Polymarket；最终结果按各事件的独立判定指标确认。",
         "仅反映市场当时预期，不构成交易建议。",
+        "非Polymarket官方产品。",
     ])
     return "\n".join(lines)
 
@@ -860,7 +869,7 @@ def build_public_page(
     summary_json = json.dumps(
         share_summary_text(snapshots, checked_at) + f"\n{public_url}", ensure_ascii=False
     )
-    title_json = json.dumps("事件概率雷达｜霍尔木兹与美联储", ensure_ascii=False)
+    title_json = json.dumps(f"{PRODUCT_NAME_ZH}｜霍尔木兹与美联储", ensure_ascii=False)
     failure_note = ""
     if failures:
         failure_note = (
@@ -869,8 +878,8 @@ def build_public_page(
         )
     return f"""---
 layout: page
-title: 事件概率雷达
-description: 霍尔木兹海峡风险与美联储利率决策的市场隐含概率公开快照。
+title: Polymarket观测站
+description: 非官方的Polymarket事件概率观测页，跟踪霍尔木兹海峡风险与美联储利率决策。
 header: false
 comments: false
 toc: false
@@ -881,7 +890,7 @@ permalink: /event-radar/
 {public_styles()}
 <main class="radar-shell" aria-labelledby="radar-title">
   <header class="radar-head">
-    <div><p class="radar-kicker">Event Probability Radar</p><h1 id="radar-title">事件概率雷达</h1></div>
+    <div><p class="radar-kicker">Polymarket Observatory · Unofficial</p><h1 id="radar-title">Polymarket观测站</h1></div>
     <p class="radar-time">数据时间<br><strong>{html.escape(timestamp)}</strong></p>
   </header>
   <div class="radar-grid">{cards}</div>
@@ -892,7 +901,7 @@ permalink: /event-radar/
     <a class="radar-action radar-action--secondary" href="/images/event-radar-latest.png" download>下载朋友圈图片</a>
     <span class="radar-status" role="status" aria-live="polite"></span>
   </div>
-  <p class="radar-foot">概率来自Polymarket公开市场价格。Polymarket提供市场预期，IMF PortWatch或FOMC会后声明负责确认最终事实。市场概率会变化，不是客观预测，也不构成交易建议。</p>
+  <p class="radar-foot">概率来自Polymarket公开市场价格。Polymarket提供市场预期，IMF PortWatch或FOMC会后声明负责确认最终事实。市场概率会变化，不是客观预测，也不构成交易建议。本产品为非官方观测工具，与Polymarket无隶属或合作关系。</p>
 </main>
 <script>
 (() => {{
@@ -920,21 +929,21 @@ def build_share_card(snapshots: list[dict], checked_at: datetime) -> str:
     cards = "".join(public_event_html(snapshot) for snapshot in snapshots)
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=1080">
-<title>事件概率雷达</title>{public_styles(card=True)}</head>
+<title>Polymarket观测站</title>{public_styles(card=True)}</head>
 <body class="radar-card" style="background:#f5f1e8"><main class="radar-shell" aria-labelledby="radar-card-title">
   <header class="radar-head">
-    <div><p class="radar-kicker">Tera Research · Event Probability Radar</p><h1 id="radar-card-title">事件概率雷达</h1></div>
+    <div><p class="radar-kicker">Polymarket Observatory · Unofficial</p><h1 id="radar-card-title">Polymarket观测站</h1></div>
     <p class="radar-time">数据时间<br><strong>{html.escape(timestamp)}</strong></p>
   </header>
   <div class="radar-grid">{cards}</div>
-  <p class="radar-foot">数据来自Polymarket公开市场价格；最终结果按IMF PortWatch或FOMC会后声明确认。市场概率会变化，不是客观预测，也不构成交易建议。</p>
+  <p class="radar-foot">数据来自Polymarket公开市场价格；最终结果按IMF PortWatch或FOMC会后声明确认。市场概率会变化，不是客观预测，也不构成交易建议。非Polymarket官方产品。</p>
 </main></body></html>
 """
 
 
 def build_report(snapshots: list[dict], failures: list[dict], checked_at: datetime) -> str:
     lines = [
-        "# 事件概率雷达",
+        f"# {PRODUCT_NAME_ZH}",
         "",
         f"最后检查：{checked_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}",
         "",
@@ -1003,6 +1012,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--export-share", action="store_true",
         help="刷新公开快照与朋友圈卡片，不通知、不改监控状态",
+    )
+    parser.add_argument(
+        "--daily-now", action="store_true",
+        help="立即发送一次完整晨报，用于人工验收",
     )
     parser.add_argument("--config", type=Path, default=CONFIG_PATH, help="事件配置文件")
     return parser.parse_args(argv)
@@ -1093,7 +1106,7 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
         return 1 if failures else 0
 
     notification_result = {"ok": True, "reason": "no alerts", "kind": "none"}
-    digest_due = daily_digest_due(config, state, current_time)
+    digest_due = args.daily_now or daily_digest_due(config, state, current_time)
     digest_ready = (
         digest_due
         and not failures
@@ -1107,7 +1120,7 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
         notification_result["kind"] = "daily_digest"
         if notification_result.get("ok") and not args.dry_run:
             digest_timezone = config.get("daily_digest", {}).get(
-                "timezone", "Asia/Tokyo"
+                "timezone", CUSTOMER_TIMEZONE_NAME
             )
             state["last_daily_digest_date"] = current_time.astimezone(
                 ZoneInfo(digest_timezone)
@@ -1161,7 +1174,7 @@ def main(argv: list[str]) -> int:
         try:
             fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            print("事件雷达已有实例在运行，本次跳过。")
+            print(f"{PRODUCT_NAME_ZH}已有实例在运行，本次跳过。")
             return 0
         return run(argv)
 

@@ -11,15 +11,15 @@
         <string>/Users/tera/Projects/toushi-system/Scripts/run_event_radar.sh</string>
     </array>
 
-    <!-- 每15分钟静默检查；08:00 JST发一次晨报，其余时间仅异常提醒。 -->
+    <!-- 每15分钟静默检查；北京时间08:00发一次晨报，其余时间仅异常提醒。 -->
     <key>StartInterval</key>
     <integer>900</integer>
 
-    <!-- 在15分钟轮询之外，确保每天08:00触发一次晨报检查。 -->
+    <!-- 本机为日本时区；09:00 JST对应北京时间08:00。 -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>8</integer>
+        <integer>9</integer>
         <key>Minute</key>
         <integer>0</integer>
     </dict>

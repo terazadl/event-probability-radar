@@ -291,7 +291,7 @@ class EventRadarTests(unittest.TestCase):
             },
             NOW,
         )
-        _, body = event_radar.build_notification([{
+        title, body = event_radar.build_notification([{
             "snapshot": snapshot,
             "samples": [event_radar.compact_sample(snapshot)],
             "triggers": [{
@@ -315,7 +315,8 @@ class EventRadarTests(unittest.TestCase):
         self.assertNotIn("不降息", body)
         self.assertNotIn("归一化前五项合计", body)
         self.assertIn("市场概率：[Polymarket]", body)
-        self.assertIn("数据时间：2026-08-12 15:00 JST", body)
+        self.assertIn("数据时间：2026-08-12 14:00（北京时间）", body)
+        self.assertIn("Polymarket观测站", title)
 
     def test_hormuz_notification_separates_probability_from_resolution(self) -> None:
         config = event([{"market_id": "1", "outcome": "No", "label": "未恢复"}])
@@ -364,20 +365,22 @@ class EventRadarTests(unittest.TestCase):
         self.assertIn("下载朋友圈图片", page)
         self.assertIn("五个互斥结果，合计100%", page)
         self.assertIn("不是客观预测", page)
+        self.assertIn("Polymarket观测站", page)
+        self.assertIn("非官方观测工具", page)
 
-    def test_daily_digest_is_due_only_in_eight_oclock_jst_window(self) -> None:
+    def test_daily_digest_is_due_only_in_eight_oclock_beijing_window(self) -> None:
         config = {
             "daily_digest": {
                 "enabled": True,
-                "timezone": "Asia/Tokyo",
+                "timezone": "Asia/Shanghai",
                 "hour": 8,
                 "minute": 0,
                 "send_window_minutes": 60,
             }
         }
-        before = datetime(2026, 8, 11, 22, 59, tzinfo=timezone.utc)
-        at_eight = datetime(2026, 8, 11, 23, 0, tzinfo=timezone.utc)
-        after_window = datetime(2026, 8, 12, 0, 0, tzinfo=timezone.utc)
+        before = datetime(2026, 8, 11, 23, 59, tzinfo=timezone.utc)
+        at_eight = datetime(2026, 8, 12, 0, 0, tzinfo=timezone.utc)
+        after_window = datetime(2026, 8, 12, 1, 0, tzinfo=timezone.utc)
         self.assertFalse(event_radar.daily_digest_due(config, {}, before))
         self.assertTrue(event_radar.daily_digest_due(config, {}, at_eight))
         self.assertFalse(event_radar.daily_digest_due(config, {}, after_window))
@@ -419,8 +422,8 @@ class EventRadarTests(unittest.TestCase):
                 "triggers": [{"kind": "threshold_up", "threshold_pct": 75}],
             }],
         )
-        self.assertEqual(title, "事件雷达早报｜8月12日")
-        self.assertIn("每天08:00 JST固定更新", body)
+        self.assertEqual(title, "Polymarket观测站早报｜8月12日")
+        self.assertIn("每天北京时间08:00固定更新", body)
         self.assertIn("本次同时触发异常", body)
         self.assertIn("五个互斥结果（合计100%）", body)
         for row in fed["outcomes"]:
@@ -434,14 +437,14 @@ class EventRadarTests(unittest.TestCase):
             "schema_version": 2,
             "daily_digest": {
                 "enabled": True,
-                "timezone": "Asia/Tokyo",
+                "timezone": "Asia/Shanghai",
                 "hour": 8,
                 "minute": 0,
                 "send_window_minutes": 60,
             },
             "events": [radar_event],
         }
-        first_run = datetime(2026, 8, 11, 23, 5, tzinfo=timezone.utc)
+        first_run = datetime(2026, 8, 12, 0, 5, tzinfo=timezone.utc)
         second_run = first_run + timedelta(minutes=15)
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary = Path(temporary_directory)
@@ -472,7 +475,7 @@ class EventRadarTests(unittest.TestCase):
         self.assertEqual(second_code, 0)
         self.assertEqual(push.call_count, 1)
         self.assertEqual(saved_state["last_daily_digest_date"], "2026-08-12")
-        self.assertIn("事件雷达早报", push.call_args.args[0])
+        self.assertIn("Polymarket观测站早报", push.call_args.args[0])
 
     def test_dry_run_does_not_write_state_or_notify(self) -> None:
         config = event([{"market_id": "1", "outcome": "Yes", "label": "Yes"}])
