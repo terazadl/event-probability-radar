@@ -365,6 +365,115 @@ class EventRadarTests(unittest.TestCase):
         self.assertIn("五个互斥结果，合计100%", page)
         self.assertIn("不是客观预测", page)
 
+    def test_daily_digest_is_due_only_in_eight_oclock_jst_window(self) -> None:
+        config = {
+            "daily_digest": {
+                "enabled": True,
+                "timezone": "Asia/Tokyo",
+                "hour": 8,
+                "minute": 0,
+                "send_window_minutes": 60,
+            }
+        }
+        before = datetime(2026, 8, 11, 22, 59, tzinfo=timezone.utc)
+        at_eight = datetime(2026, 8, 11, 23, 0, tzinfo=timezone.utc)
+        after_window = datetime(2026, 8, 12, 0, 0, tzinfo=timezone.utc)
+        self.assertFalse(event_radar.daily_digest_due(config, {}, before))
+        self.assertTrue(event_radar.daily_digest_due(config, {}, at_eight))
+        self.assertFalse(event_radar.daily_digest_due(config, {}, after_window))
+        self.assertFalse(event_radar.daily_digest_due(
+            config, {"last_daily_digest_date": "2026-08-12"}, at_eight
+        ))
+
+    def test_daily_digest_shows_full_distribution_and_merges_anomaly(self) -> None:
+        scalar_config = event([
+            {"market_id": "10", "outcome": "No", "label": "仍未恢复"}
+        ])
+        scalar_config.update({
+            "id": "hormuz-test",
+            "label_zh": "霍尔木兹海峡风险",
+            "customer_question_zh": "截至8月31日仍未恢复正常",
+            "resolution_source_name": "IMF PortWatch",
+            "resolution_metric_zh": "7日平均通行船次",
+        })
+        hormuz = event_radar.build_snapshot(
+            scalar_config, {"10": market("10", 0.03, 0.05)}, NOW
+        )
+        fed_config = distribution_event()
+        fed = event_radar.build_snapshot(
+            fed_config,
+            {
+                "1": market("1", 0.01, 0.02),
+                "2": market("2", 0.00, 0.01),
+                "3": market("3", 0.61, 0.63),
+                "4": market("4", 0.34, 0.36),
+                "5": market("5", 0.00, 0.01),
+            },
+            NOW,
+        )
+        title, body = event_radar.build_daily_digest(
+            [hormuz, fed],
+            NOW,
+            candidates=[{
+                "snapshot": hormuz,
+                "triggers": [{"kind": "threshold_up", "threshold_pct": 75}],
+            }],
+        )
+        self.assertEqual(title, "事件雷达早报｜8月12日")
+        self.assertIn("每天08:00 JST固定更新", body)
+        self.assertIn("本次同时触发异常", body)
+        self.assertIn("五个互斥结果（合计100%）", body)
+        for row in fed["outcomes"]:
+            self.assertIn(row["label_zh"], body)
+
+    def test_daily_digest_is_sent_and_persisted_once_per_day(self) -> None:
+        radar_event = event([
+            {"market_id": "1", "outcome": "Yes", "label": "Yes"}
+        ])
+        payload = {
+            "schema_version": 2,
+            "daily_digest": {
+                "enabled": True,
+                "timezone": "Asia/Tokyo",
+                "hour": 8,
+                "minute": 0,
+                "send_window_minutes": 60,
+            },
+            "events": [radar_event],
+        }
+        first_run = datetime(2026, 8, 11, 23, 5, tzinfo=timezone.utc)
+        second_run = first_run + timedelta(minutes=15)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            config_path = temporary / "events.json"
+            state_path = temporary / "state.json"
+            config_path.write_text(json.dumps(payload), encoding="utf-8")
+            with patch.object(event_radar, "STATE_PATH", state_path), patch.object(
+                event_radar, "HISTORY_DIR", temporary / "history"
+            ), patch.object(
+                event_radar, "REPORT_PATH", temporary / "report.md"
+            ), patch.object(
+                event_radar, "PUBLIC_REPORT_PATH", temporary / "public.html"
+            ), patch.object(
+                event_radar, "SHARE_CARD_PATH", temporary / "card.html"
+            ), patch.object(
+                event_radar, "fetch_market", return_value=market("1", 0.2, 0.22)
+            ), patch.object(
+                event_radar.notify, "push", return_value={"ok": True, "reason": "sent"}
+            ) as push:
+                first_code = event_radar.run(
+                    ["--config", str(config_path)], now=first_run
+                )
+                second_code = event_radar.run(
+                    ["--config", str(config_path)], now=second_run
+                )
+            saved_state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(first_code, 0)
+        self.assertEqual(second_code, 0)
+        self.assertEqual(push.call_count, 1)
+        self.assertEqual(saved_state["last_daily_digest_date"], "2026-08-12")
+        self.assertIn("事件雷达早报", push.call_args.args[0])
+
     def test_dry_run_does_not_write_state_or_notify(self) -> None:
         config = event([{"market_id": "1", "outcome": "Yes", "label": "Yes"}])
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -1,6 +1,13 @@
 {
   "schema_version": 2,
   "poll_interval_minutes": 15,
+  "daily_digest": {
+    "enabled": true,
+    "timezone": "Asia/Tokyo",
+    "hour": 8,
+    "minute": 0,
+    "send_window_minutes": 60
+  },
   "public_share_enabled": false,
   "public_share_url": "https://terazadl.github.io/event-radar/",
   "events": [

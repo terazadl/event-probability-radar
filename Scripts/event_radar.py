@@ -647,6 +647,88 @@ def build_notification(
     return title, "\n\n".join(sections)
 
 
+def daily_digest_due(config: dict, state: dict, now: datetime) -> bool:
+    """在设定的本地时间窗口内，每个自然日最多返回一次 True。"""
+    settings = config.get("daily_digest", {})
+    if not settings.get("enabled"):
+        return False
+    local_time = now.astimezone(ZoneInfo(settings.get("timezone", "Asia/Tokyo")))
+    start_minute = int(settings.get("hour", 8)) * 60 + int(settings.get("minute", 0))
+    window_minutes = max(1, int(settings.get("send_window_minutes", 60)))
+    current_minute = local_time.hour * 60 + local_time.minute
+    in_window = start_minute <= current_minute < start_minute + window_minutes
+    return (
+        in_window
+        and state.get("last_daily_digest_date") != local_time.date().isoformat()
+    )
+
+
+def build_daily_digest(
+    snapshots: list[dict], checked_at: datetime, candidates: Optional[list[dict]] = None,
+    share_url: Optional[str] = None,
+) -> tuple[str, str]:
+    local_time = checked_at.astimezone(ZoneInfo("Asia/Tokyo"))
+    title = f"事件雷达早报｜{local_time.month}月{local_time.day}日"
+    trigger_map = {
+        candidate["snapshot"]["event_id"]: candidate["triggers"]
+        for candidate in (candidates or [])
+    }
+    sections = [
+        "# 今日事件概率",
+        "> 每天08:00 JST固定更新；其余时间仅在达到异常阈值时即时提醒。",
+    ]
+    for snapshot in snapshots:
+        triggers = trigger_map.get(snapshot["event_id"], [])
+        alert_line = ""
+        if triggers:
+            alert_line = (
+                "\n- ⚠️ 本次同时触发异常："
+                + "；".join(trigger_text(trigger) for trigger in triggers)
+            )
+        if snapshot["mode"] == "distribution":
+            outcome_lines = "\n".join(
+                f"  - {row['label_zh']}：**{row['display_probability_pct']:.1f}%**"
+                for row in snapshot["outcomes"]
+            )
+            probability_text = (
+                f"- 当前最可能：**{snapshot['outcome_leader']['label_zh']} "
+                f"{snapshot['outcome_leader']['display_probability_pct']:.1f}%**\n"
+                f"- 五个互斥结果（合计100%）：\n{outcome_lines}"
+            )
+        else:
+            probability_text = (
+                f"- {snapshot['customer_question_zh']}："
+                f"**{snapshot['probability_pct']:.1f}%**"
+            )
+        sections.append(
+            f"## {snapshot['label_zh']}\n\n"
+            f"{probability_text}{alert_line}\n"
+            f"- 市场概率：[{snapshot['source_name']}]({snapshot['source_url']})\n"
+            f"- 判定指标：[{snapshot['resolution_source_name']}]"
+            f"({snapshot['resolution_source_url']}) · {snapshot['resolution_metric_zh']}"
+        )
+    if share_url:
+        sections.append(f"[查看并分享公开快照]({share_url})")
+    sections.append(
+        f"数据时间：{customer_timestamp(isoformat_utc(checked_at))}\n\n"
+        "---\n\n市场概率会变化，仅反映Polymarket参与者当时的预期；"
+        "不是事实概率，也不构成交易建议。"
+    )
+    return title, "\n\n".join(sections)
+
+
+def mark_alert_candidates_sent(candidates: list[dict]) -> None:
+    for candidate in candidates:
+        event_state = candidate["event_state"]
+        snapshot = candidate["snapshot"]
+        event_state["last_alert_at"] = snapshot["timestamp"]
+        if snapshot["mode"] == "distribution":
+            event_state["last_alert_probabilities"] = snapshot["probabilities"]
+        else:
+            event_state["last_alert_probability"] = snapshot["probability"]
+        event_state.pop("pending_alert", None)
+
+
 def share_summary_text(snapshots: list[dict], checked_at: datetime) -> str:
     lines = [f"事件概率雷达｜{customer_timestamp(isoformat_utc(checked_at))}"]
     for snapshot in snapshots:
@@ -1010,19 +1092,34 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
         print(f"[SHARE] 朋友圈卡片：{SHARE_CARD_PATH}")
         return 1 if failures else 0
 
-    notification_result = {"ok": True, "reason": "no alerts"}
-    if candidates:
+    notification_result = {"ok": True, "reason": "no alerts", "kind": "none"}
+    digest_due = daily_digest_due(config, state, current_time)
+    digest_ready = (
+        digest_due
+        and not failures
+        and len(snapshots) == len(config["events"])
+    )
+    if digest_ready:
+        title, body = build_daily_digest(
+            snapshots, current_time, candidates, public_share_url or None
+        )
+        notification_result = notify.push(title, body, dry_run=args.dry_run)
+        notification_result["kind"] = "daily_digest"
+        if notification_result.get("ok") and not args.dry_run:
+            digest_timezone = config.get("daily_digest", {}).get(
+                "timezone", "Asia/Tokyo"
+            )
+            state["last_daily_digest_date"] = current_time.astimezone(
+                ZoneInfo(digest_timezone)
+            ).date().isoformat()
+            state["last_daily_digest_at"] = isoformat_utc(current_time)
+            mark_alert_candidates_sent(candidates)
+    elif candidates:
         title, body = build_notification(candidates, public_share_url or None)
         notification_result = notify.push(title, body, dry_run=args.dry_run)
+        notification_result["kind"] = "anomaly_alert"
         if notification_result.get("ok") and not args.dry_run:
-            for candidate in candidates:
-                event_state = candidate["event_state"]
-                event_state["last_alert_at"] = candidate["snapshot"]["timestamp"]
-                if candidate["snapshot"]["mode"] == "distribution":
-                    event_state["last_alert_probabilities"] = candidate["snapshot"]["probabilities"]
-                else:
-                    event_state["last_alert_probability"] = candidate["snapshot"]["probability"]
-                event_state.pop("pending_alert", None)
+            mark_alert_candidates_sent(candidates)
 
     audit = {
         "checked_at": isoformat_utc(current_time),
