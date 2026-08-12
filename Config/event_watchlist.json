@@ -32,26 +32,26 @@
     },
     {
       "id": "fed_decision_sep_2026",
-      "label_zh": "美联储9月会议利率决策分布",
+      "label_zh": "美联储9月利率决策",
       "mode": "distribution",
       "source_name": "Polymarket",
       "source_url": "https://polymarket.com/event/fed-decision-in-september-762",
       "resolution_source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
-      "resolution_summary_zh": "跟踪2026年9月15–16日FOMC会议五个互斥结果，并归一化聚合为降息、不变、加息三项完整分布；以FOMC会后声明中的联邦基金目标区间上限变化为准。",
+      "resolution_summary_zh": "跟踪2026年9月15–16日美联储议息会议的五个互斥结果；以会后声明中的联邦基金目标区间上限变化为准。",
       "buckets": [
         {
           "id": "cut",
           "label_zh": "降息",
           "components": [
             {
-              "market_id": "2252243",
-              "outcome": "Yes",
-              "label": "降息25bp"
-            },
-            {
               "market_id": "2252242",
               "outcome": "Yes",
-              "label": "降息50bp以上"
+              "label": "降息至少0.50个百分点"
+            },
+            {
+              "market_id": "2252243",
+              "outcome": "Yes",
+              "label": "降息0.25个百分点"
             }
           ]
         },
@@ -62,7 +62,7 @@
             {
               "market_id": "2252244",
               "outcome": "Yes",
-              "label": "利率不变"
+              "label": "维持利率不变"
             }
           ]
         },
@@ -73,12 +73,12 @@
             {
               "market_id": "2252245",
               "outcome": "Yes",
-              "label": "加息25bp"
+              "label": "加息0.25个百分点"
             },
             {
               "market_id": "2252246",
               "outcome": "Yes",
-              "label": "加息50bp以上"
+              "label": "加息至少0.50个百分点"
             }
           ]
         }

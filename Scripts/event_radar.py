@@ -159,6 +159,26 @@ def event_components(event: dict) -> list[dict]:
     return event["components"]
 
 
+def display_percentages(probabilities: list[float], digits: int = 1) -> list[float]:
+    """用最大余数法四舍五入，保证客户看到的百分比合计恰好为100%。"""
+    total = sum(probabilities)
+    if total <= 0:
+        raise ValueError("概率合计必须大于零")
+    scale = 10 ** digits
+    target_units = 100 * scale
+    raw_units = [probability / total * target_units for probability in probabilities]
+    units = [int(value) for value in raw_units]
+    remainder = target_units - sum(units)
+    order = sorted(
+        range(len(raw_units)),
+        key=lambda index: raw_units[index] - units[index],
+        reverse=True,
+    )
+    for index in order[:remainder]:
+        units[index] += 1
+    return [value / scale for value in units]
+
+
 def build_snapshot(event: dict, markets: dict[str, dict], now: datetime) -> dict:
     mode = event.get("mode", "scalar")
     components = []
@@ -185,8 +205,26 @@ def build_snapshot(event: dict, markets: dict[str, dict], now: datetime) -> dict
             row["probability"] = row["raw_probability"] / normalization_total
             row["probability_pct"] = row["probability"] * 100
             row["spread_pp"] = row.pop("spread") * 100
+        outcome_probabilities = [
+            row["probability"] / normalization_total for row in components
+        ]
+        outcome_display_percentages = display_percentages(outcome_probabilities)
+        outcomes = [
+            {
+                "market_id": row["market_id"],
+                "label_zh": row["label"],
+                "raw_probability": row["probability"],
+                "probability": probability,
+                "probability_pct": probability * 100,
+                "display_probability_pct": display_probability_pct,
+            }
+            for row, probability, display_probability_pct in zip(
+                components, outcome_probabilities, outcome_display_percentages
+            )
+        ]
         spread = max(row["spread_pp"] for row in distribution) / 100
         leader = max(distribution, key=lambda row: row["probability"])
+        outcome_leader = max(outcomes, key=lambda row: row["probability"])
     elif mode == "scalar":
         components = [
             component_quote(component, markets[str(component["market_id"])])
@@ -240,12 +278,19 @@ def build_snapshot(event: dict, markets: dict[str, dict], now: datetime) -> dict
     if mode == "distribution":
         snapshot.update({
             "distribution": distribution,
+            "outcomes": outcomes,
             "probabilities": {row["id"]: row["probability"] for row in distribution},
             "normalization_total": normalization_total,
             "leader": {
                 "id": leader["id"],
                 "label_zh": leader["label_zh"],
                 "probability": leader["probability"],
+            },
+            "outcome_leader": {
+                "market_id": outcome_leader["market_id"],
+                "label_zh": outcome_leader["label_zh"],
+                "probability": outcome_leader["probability"],
+                "display_probability_pct": outcome_leader["display_probability_pct"],
             },
         })
     else:
@@ -528,11 +573,14 @@ def build_notification(candidates: list[dict]) -> tuple[str, str]:
                     bucket_changes.append(f"24小时 {delta_24h:+.1f}pp")
                 if bucket_changes:
                     changes.append(f"{bucket['label_zh']} " + "、".join(bucket_changes))
+            outcome_lines = "\n".join(
+                f"  - {row['label_zh']}：**{row['display_probability_pct']:.1f}%**"
+                for row in snapshot["outcomes"]
+            )
             probability_line = (
-                f"- 当前完整分布：**{distribution_text(snapshot)}**\n"
-                f"- 当前领先结果：{snapshot['leader']['label_zh']} "
-                f"{snapshot['leader']['probability'] * 100:.1f}%\n"
-                f"- 归一化前五项合计：{snapshot['normalization_total'] * 100:.2f}%\n"
+                f"- 当前五种互斥结果：\n{outcome_lines}\n"
+                f"- 当前最可能：{snapshot['outcome_leader']['label_zh']} "
+                f"{snapshot['outcome_leader']['display_probability_pct']:.1f}%\n"
             )
         else:
             delta_1h = current_delta(samples, 1)
@@ -600,18 +648,18 @@ def build_report(snapshots: list[dict], failures: list[dict], checked_at: dateti
         ])
         if snapshot["mode"] == "distribution":
             lines.extend([
-                "| 结果 | 归一化概率 | 原始中点合计 |",
+                "| 五个互斥结果 | 归一化概率 | 原始中点 |",
                 "|---|---:|---:|",
             ])
             lines.extend(
-                f"| {row['label_zh']} | {row['probability_pct']:.1f}% | "
+                f"| {row['label_zh']} | {row['display_probability_pct']:.1f}% | "
                 f"{row['raw_probability'] * 100:.2f}% |"
-                for row in snapshot["distribution"]
+                for row in snapshot["outcomes"]
             )
             lines.extend([
                 "",
                 f"五个互斥结果归一化前合计：{snapshot['normalization_total'] * 100:.2f}%。",
-                "归一化后的三项合计为100%，因此不会把加息错误归入“不变”。",
+                "归一化并显示后的五项合计为100%。",
                 "",
             ])
         lines.extend([

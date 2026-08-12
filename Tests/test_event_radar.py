@@ -78,23 +78,23 @@ def distribution_event() -> dict:
                 "id": "cut",
                 "label_zh": "降息",
                 "components": [
-                    {"market_id": "1", "outcome": "Yes", "label": "降息25bp"},
-                    {"market_id": "2", "outcome": "Yes", "label": "降息50bp以上"},
+                    {"market_id": "1", "outcome": "Yes", "label": "降息至少0.50个百分点"},
+                    {"market_id": "2", "outcome": "Yes", "label": "降息0.25个百分点"},
                 ],
             },
             {
                 "id": "unchanged",
                 "label_zh": "不变",
                 "components": [
-                    {"market_id": "3", "outcome": "Yes", "label": "不变"},
+                    {"market_id": "3", "outcome": "Yes", "label": "维持利率不变"},
                 ],
             },
             {
                 "id": "hike",
                 "label_zh": "加息",
                 "components": [
-                    {"market_id": "4", "outcome": "Yes", "label": "加息25bp"},
-                    {"market_id": "5", "outcome": "Yes", "label": "加息50bp以上"},
+                    {"market_id": "4", "outcome": "Yes", "label": "加息0.25个百分点"},
+                    {"market_id": "5", "outcome": "Yes", "label": "加息至少0.50个百分点"},
                 ],
             },
         ],
@@ -176,6 +176,11 @@ class EventRadarTests(unittest.TestCase):
         self.assertAlmostEqual(sum(snapshot["probabilities"].values()), 1.0)
         self.assertEqual([row["label_zh"] for row in snapshot["distribution"]], ["降息", "不变", "加息"])
         self.assertEqual(snapshot["leader"]["id"], "unchanged")
+        self.assertEqual(len(snapshot["outcomes"]), 5)
+        self.assertAlmostEqual(
+            sum(row["display_probability_pct"] for row in snapshot["outcomes"]),
+            100.0,
+        )
         self.assertNotIn("probability", snapshot)
 
     def test_first_sample_only_establishes_baseline(self) -> None:
@@ -296,10 +301,17 @@ class EventRadarTests(unittest.TestCase):
                 "bucket_label": "不变",
             }],
         }])
-        self.assertIn("降息", body)
-        self.assertIn("不变", body)
-        self.assertIn("加息", body)
-        self.assertIn("归一化前五项合计", body)
+        for label in (
+            "降息至少0.50个百分点",
+            "降息0.25个百分点",
+            "维持利率不变",
+            "加息0.25个百分点",
+            "加息至少0.50个百分点",
+        ):
+            self.assertIn(label, body)
+        self.assertIn("当前五种互斥结果", body)
+        self.assertNotIn("不降息", body)
+        self.assertNotIn("归一化前五项合计", body)
         self.assertIn("数据来源：[Polymarket]", body)
         self.assertIn("数据截至：2026-08-12 15:00 JST", body)
 
