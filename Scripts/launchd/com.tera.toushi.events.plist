@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tera.toushi.events</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/tera/Projects/toushi-system/Scripts/run_event_radar.sh</string>
+    </array>
+
+    <!-- 每15分钟检查一次。第一次仅建立基线，不发送概率告警。 -->
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/tera/Projects/toushi-system/Logs/launchd.events.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/tera/Projects/toushi-system/Logs/launchd.events.err.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/tera/Projects/toushi-system</string>
+</dict>
+</plist>

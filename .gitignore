@@ -12,6 +12,12 @@ Data/**/errors-*.json
 # 运行时状态
 Data/run_state.json
 Data/notify_state.json
+Data/events/state.json
+Data/events/radar.lock
+Data/events/history/
+
+# 高频生成的事件雷达看板：Obsidian 可见，但不进入版本历史
+Reports/事件概率雷达.md
 
 # launchd 的 stdout/stderr，噪音
 Logs/launchd.*.log
