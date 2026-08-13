@@ -35,6 +35,7 @@ HISTORY_DIR = DATA_DIR / "history"
 REPORT_PATH = SYSTEM_DIR / "Reports" / "事件概率雷达.md"
 PUBLIC_REPORT_PATH = SYSTEM_DIR / "Reports" / "事件概率雷达·公开快照.html"
 SHARE_CARD_PATH = SYSTEM_DIR / "Reports" / "事件概率雷达·分享卡片.html"
+PUBLISH_SHARE_SCRIPT = SYSTEM_DIR / "Scripts" / "publish_event_share.sh"
 
 GAMMA_MARKET_URL = "https://gamma-api.polymarket.com/markets/{market_id}"
 CURL_TIMEOUT_SECONDS = 30
@@ -54,6 +55,12 @@ def isoformat_utc(value: datetime) -> str:
 
 def parse_timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def customer_report_date(value: datetime) -> str:
+    """返回面向中国用户的日报日期，格式为 YYYYMMDD。"""
+    local = value.astimezone(ZoneInfo(CUSTOMER_TIMEZONE_NAME))
+    return f"{local:%Y%m%d}"
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -744,14 +751,21 @@ def mark_alert_candidates_sent(candidates: list[dict]) -> None:
 
 
 def share_summary_text(snapshots: list[dict], checked_at: datetime) -> str:
-    lines = [f"{PRODUCT_NAME_ZH}｜{customer_timestamp(isoformat_utc(checked_at))}"]
+    lines = [
+        f"{PRODUCT_NAME_ZH}｜日报 {customer_report_date(checked_at)}",
+        "今日读数："
+    ]
     for snapshot in snapshots:
         if snapshot["mode"] == "distribution":
+            leader = snapshot["outcome_leader"]
             outcomes = "；".join(
                 f"{row['label_zh']} {row['display_probability_pct']:.1f}%"
                 for row in snapshot["outcomes"]
             )
-            lines.append(f"美联储9月：{outcomes}")
+            lines.append(
+                f"美联储9月：{leader['label_zh']} {leader['display_probability_pct']:.1f}%"
+            )
+            lines.append(f"五个互斥结果：{outcomes}")
         else:
             lines.append(
                 f"霍尔木兹：{snapshot['customer_question_zh']} "
@@ -801,9 +815,9 @@ def public_event_html(snapshot: dict) -> str:
         f"<p class=\"radar-eyebrow\">{html.escape(snapshot['notification_title_zh'])}</p>"
         f"<h2>{label}</h2>{headline}"
         "<dl class=\"radar-method\">"
-        f"<div><dt>市场概率</dt><dd><a href=\"{source_url}\" target=\"_blank\" "
+        f"<div><dt>市场定价</dt><dd><a href=\"{source_url}\" target=\"_blank\" "
         f"rel=\"noopener\">{source_name}</a></dd></div>"
-        f"<div><dt>判定指标</dt><dd><a href=\"{resolution_url}\" target=\"_blank\" "
+        f"<div><dt>最终判定来源</dt><dd><a href=\"{resolution_url}\" target=\"_blank\" "
         f"rel=\"noopener\">{resolution_name}</a><br>{metric}</dd></div>"
         f"<div><dt>判定规则</dt><dd>{rule}</dd></div>"
         "</dl>"
@@ -819,6 +833,7 @@ def public_styles(*, card: bool = False) -> str:
         ".radar-card .radar-head{margin-bottom:20px;}"
         ".radar-card .radar-grid{grid-template-columns:1fr;gap:18px;}"
         ".radar-card .radar-event{padding:21px 28px 19px;}"
+        ".radar-card .radar-summary{font-size:15px;margin:-4px 0 18px;}"
         ".radar-card .radar-event h2{font-size:25px;margin-bottom:11px;}"
         ".radar-card .radar-number{font-size:64px;}"
         ".radar-card .radar-question{margin-bottom:12px;}"
@@ -838,7 +853,11 @@ def public_styles(*, card: bool = False) -> str:
 .radar-head{{align-items:end;border-bottom:1px solid #1d1c18;display:flex;gap:28px;justify-content:space-between;margin-bottom:28px;padding-bottom:18px;}}
 .radar-kicker{{color:#2f55d4;font-size:12px;font-weight:900;letter-spacing:.15em;margin:0 0 9px;text-transform:uppercase;}}
 .radar-head h1{{font-family:"Libre Caslon Display","Noto Serif SC",serif;font-size:clamp(37px,5vw,58px);font-weight:400;letter-spacing:-.035em;line-height:1;margin:0;}}
-.radar-time{{color:#706a60;font-size:13px;margin:0;text-align:right;}}
+.radar-time{{color:#706a60;font-size:13px;line-height:1.45;margin:0;text-align:right;}}
+.radar-time strong{{color:#1d1c18;display:inline-block;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.1;}}
+.radar-time small{{font-size:12px;}}
+.radar-summary{{border-left:3px solid #2f55d4;color:#45423b;font-family:"Noto Serif SC",serif;font-size:16px;line-height:1.55;margin:0 0 24px;padding:10px 14px;}}
+.radar-summary strong{{color:#1d1c18;font-weight:700;}}
 .radar-grid{{display:grid;gap:22px;grid-template-columns:repeat(2,minmax(0,1fr));}}
 .radar-event{{background:rgba(255,255,255,.28);border:1px solid #a8a092;border-top:3px solid #2f55d4;padding:26px 28px 24px;}}
 .radar-eyebrow{{color:#2f55d4;font-size:11px;font-weight:900;letter-spacing:.12em;margin:0 0 8px;text-transform:uppercase;}}
@@ -871,6 +890,19 @@ def build_public_page(
     public_url: str = "https://terazadl.github.io/event-radar/",
 ) -> str:
     timestamp = customer_timestamp(isoformat_utc(checked_at))
+    report_date = customer_report_date(checked_at)
+    summary_bits = []
+    for snapshot in snapshots:
+        if snapshot["mode"] == "distribution":
+            leader = snapshot["outcome_leader"]
+            summary_bits.append(
+                f"美联储9月{leader['label_zh']} {leader['display_probability_pct']:.1f}%"
+            )
+        else:
+            summary_bits.append(
+                f"霍尔木兹未恢复 {snapshot['probability_pct']:.1f}%"
+            )
+    summary = "｜".join(summary_bits)
     cards = "".join(public_event_html(snapshot) for snapshot in snapshots)
     summary_json = json.dumps(
         share_summary_text(snapshots, checked_at) + f"\n{public_url}", ensure_ascii=False
@@ -896,8 +928,8 @@ permalink: /event-radar/
 {public_styles()}
 <main class="radar-shell" aria-labelledby="radar-title">
   <header class="radar-head">
-    <div><p class="radar-kicker">Polymarket Observatory · Unofficial</p><h1 id="radar-title">Polymarket观测站</h1></div>
-    <p class="radar-time">数据时间<br><strong>{html.escape(timestamp)}</strong></p>
+    <div><p class="radar-kicker">Polymarket Observatory · Unofficial</p><h1 id="radar-title">Polymarket观测站</h1><p class="radar-summary"><strong>今日读数</strong>｜{html.escape(summary)}</p></div>
+    <p class="radar-time"><strong>日报 {report_date}</strong><br><small>{html.escape(timestamp)}</small></p>
   </header>
   <div class="radar-grid">{cards}</div>
 {failure_note}
@@ -932,19 +964,47 @@ permalink: /event-radar/
 
 def build_share_card(snapshots: list[dict], checked_at: datetime) -> str:
     timestamp = customer_timestamp(isoformat_utc(checked_at))
+    report_date = customer_report_date(checked_at)
+    summary_bits = []
+    for snapshot in snapshots:
+        if snapshot["mode"] == "distribution":
+            leader = snapshot["outcome_leader"]
+            summary_bits.append(
+                f"美联储9月{leader['label_zh']} {leader['display_probability_pct']:.1f}%"
+            )
+        else:
+            summary_bits.append(
+                f"霍尔木兹未恢复 {snapshot['probability_pct']:.1f}%"
+            )
+    summary = "｜".join(summary_bits)
     cards = "".join(public_event_html(snapshot) for snapshot in snapshots)
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=1080">
-<title>Polymarket观测站</title>{public_styles(card=True)}</head>
+<title>Polymarket观测站｜{report_date}</title>{public_styles(card=True)}</head>
 <body class="radar-card" style="background:#f5f1e8"><main class="radar-shell" aria-labelledby="radar-card-title">
   <header class="radar-head">
-    <div><p class="radar-kicker">Polymarket Observatory · Unofficial</p><h1 id="radar-card-title">Polymarket观测站</h1></div>
-    <p class="radar-time">数据时间<br><strong>{html.escape(timestamp)}</strong></p>
+    <div><p class="radar-kicker">Polymarket Observatory · Unofficial</p><h1 id="radar-card-title">Polymarket观测站</h1><p class="radar-summary"><strong>今日读数</strong>｜{html.escape(summary)}</p></div>
+    <p class="radar-time"><strong>日报 {report_date}</strong><br><small>{html.escape(timestamp)}</small></p>
   </header>
   <div class="radar-grid">{cards}</div>
   <p class="radar-foot">数据来自Polymarket公开市场价格；最终结果按IMF PortWatch或FOMC会后声明确认。市场概率会变化，不是客观预测，也不构成交易建议。非Polymarket官方产品。</p>
 </main></body></html>
 """
+
+
+def write_report_artifacts(
+    snapshots: list[dict], failures: list[dict], checked_at: datetime,
+    public_url: str,
+) -> None:
+    """将本次抓取结果写入日报页面和分享卡片，供通知前发布使用。"""
+    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PUBLIC_REPORT_PATH.write_text(
+        build_public_page(snapshots, failures, checked_at, public_url),
+        encoding="utf-8",
+    )
+    SHARE_CARD_PATH.write_text(
+        build_share_card(snapshots, checked_at), encoding="utf-8"
+    )
 
 
 def build_report(snapshots: list[dict], failures: list[dict], checked_at: datetime) -> str:
@@ -1090,6 +1150,10 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
             f"{format_money(snapshot['liquidity_usd'])})"
         )
 
+    public_page_url = (
+        str(config.get("public_share_url", "")).strip()
+        or "https://terazadl.github.io/event-radar/"
+    )
     public_share_url = (
         str(config.get("public_share_url", "")).strip()
         if config.get("public_share_enabled") else ""
@@ -1099,17 +1163,8 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
         if config.get("public_share_enabled") else ""
     )
     if args.export_share:
-        REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        PUBLIC_REPORT_PATH.write_text(
-            build_public_page(
-                snapshots, failures, current_time,
-                str(config.get("public_share_url", "")).strip()
-                or "https://terazadl.github.io/event-radar/",
-            ),
-            encoding="utf-8",
-        )
-        SHARE_CARD_PATH.write_text(
-            build_share_card(snapshots, current_time), encoding="utf-8"
+        write_report_artifacts(
+            snapshots, failures, current_time, public_page_url
         )
         print(f"[SHARE] 公开快照：{PUBLIC_REPORT_PATH}")
         print(f"[SHARE] 朋友圈卡片：{SHARE_CARD_PATH}")
@@ -1117,10 +1172,51 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
 
     notification_result = {"ok": True, "reason": "no alerts", "kind": "none"}
     digest_due = args.daily_now or daily_digest_due(config, state, current_time)
+    share_publish_error = None
+    digest_data_ready = not failures and len(snapshots) == len(config["events"])
+    if (
+        digest_due
+        and not args.dry_run
+        and config.get("public_share_enabled")
+        and digest_data_ready
+    ):
+        write_report_artifacts(
+            snapshots, failures, current_time, public_page_url
+        )
+        share_cache_key = current_time.astimezone(
+            ZoneInfo(CUSTOMER_TIMEZONE_NAME)
+        ).strftime("%Y%m%d%H%M")
+        try:
+            publish_result = subprocess.run(
+                [
+                    str(PUBLISH_SHARE_SCRIPT),
+                    public_image_url or "https://terazadl.github.io/images/event-radar-latest.png",
+                    share_cache_key,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=660,
+            )
+            publish_error = (
+                publish_result.stderr.strip()
+                or publish_result.stdout.strip()
+                or f"退出码 {publish_result.returncode}"
+            )[:1000] if publish_result.returncode else None
+        except subprocess.TimeoutExpired:
+            publish_result = None
+            publish_error = "图片发布与公开 URL 校验超过11分钟"
+        if publish_error:
+            share_publish_error = (
+                publish_error
+            )[:1000]
+            print(f"[FAIL] 分享图片发布失败：{share_publish_error}", file=sys.stderr)
+        else:
+            print("[SHARE] 今日分享图片已发布，开始发送日报。")
     digest_ready = (
         digest_due
-        and not failures
-        and len(snapshots) == len(config["events"])
+        and digest_data_ready
+        and share_publish_error is None
     )
     if digest_ready:
         title, body = build_daily_digest(
@@ -1160,20 +1256,18 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
         REPORT_PATH.write_text(
             build_report(snapshots, failures, current_time), encoding="utf-8"
         )
-        PUBLIC_REPORT_PATH.write_text(
-            build_public_page(
-                snapshots, failures, current_time,
-                str(config.get("public_share_url", "")).strip()
-                or "https://terazadl.github.io/event-radar/",
-            ),
-            encoding="utf-8",
-        )
-        SHARE_CARD_PATH.write_text(
-            build_share_card(snapshots, current_time), encoding="utf-8"
+        write_report_artifacts(
+            snapshots, failures, current_time, public_page_url
         )
 
     for failure in failures:
         print(f"[FAIL] {failure['event_id']}：{failure['error']}", file=sys.stderr)
+    if share_publish_error:
+        notification_result = {
+            "ok": False,
+            "reason": f"分享图片发布失败：{share_publish_error}",
+            "kind": "daily_digest_blocked",
+        }
     if not notification_result.get("ok"):
         print(f"[FAIL] 通知：{notification_result.get('reason')}", file=sys.stderr)
     return 1 if failures or not notification_result.get("ok") else 0
