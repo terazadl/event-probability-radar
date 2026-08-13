@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -482,6 +483,98 @@ class EventRadarTests(unittest.TestCase):
         self.assertEqual(push.call_count, 1)
         self.assertEqual(saved_state["last_daily_digest_date"], "2026-08-12")
         self.assertIn("Polymarket观测站早报", push.call_args.args[0])
+
+    def test_public_digest_blocks_when_image_configuration_is_incomplete(self) -> None:
+        radar_event = event([
+            {"market_id": "1", "outcome": "Yes", "label": "Yes"}
+        ])
+        payload = {
+            "schema_version": 2,
+            "daily_digest": {
+                "enabled": True,
+                "timezone": "Asia/Shanghai",
+                "hour": 8,
+                "minute": 0,
+                "send_window_minutes": 60,
+            },
+            "public_share_enabled": True,
+            "public_share_url": "",
+            "public_image_url": "",
+            "events": [radar_event],
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            config_path = temporary / "events.json"
+            config_path.write_text(json.dumps(payload), encoding="utf-8")
+            with patch.object(event_radar, "STATE_PATH", temporary / "state.json"), patch.object(
+                event_radar, "HISTORY_DIR", temporary / "history"
+            ), patch.object(event_radar, "REPORT_PATH", temporary / "report.md"), patch.object(
+                event_radar, "PUBLIC_REPORT_PATH", temporary / "public.html"
+            ), patch.object(event_radar, "SHARE_CARD_PATH", temporary / "card.html"), patch.object(
+                event_radar, "fetch_market", return_value=market("1", 0.2, 0.22)
+            ), patch.object(event_radar.notify, "push") as push:
+                code = event_radar.run(
+                    ["--config", str(config_path)], now=NOW.replace(hour=0, minute=5)
+                )
+            history = list((temporary / "history").glob("*.jsonl"))
+            audit = json.loads(history[0].read_text(encoding="utf-8").splitlines()[0])
+        self.assertEqual(code, 1)
+        push.assert_not_called()
+        self.assertEqual(audit["notification"]["kind"], "daily_digest_blocked")
+
+    def test_public_digest_publishes_before_sending(self) -> None:
+        radar_event = event([
+            {"market_id": "1", "outcome": "Yes", "label": "Yes"}
+        ])
+        payload = {
+            "schema_version": 2,
+            "daily_digest": {
+                "enabled": True,
+                "timezone": "Asia/Shanghai",
+                "hour": 8,
+                "minute": 0,
+                "send_window_minutes": 60,
+            },
+            "public_share_enabled": True,
+            "public_share_url": "https://example.com/event-radar/",
+            "public_image_url": "https://example.com/event-radar.png",
+            "events": [radar_event],
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            config_path = temporary / "events.json"
+            config_path.write_text(json.dumps(payload), encoding="utf-8")
+            publish_script = temporary / "publish_event_share.sh"
+            publish_script.write_text("#!/bin/sh\n", encoding="utf-8")
+            with patch.object(event_radar, "PUBLISH_SHARE_SCRIPT", publish_script), patch.object(
+                event_radar, "STATE_PATH", temporary / "state.json"
+            ), patch.object(event_radar, "HISTORY_DIR", temporary / "history"), patch.object(
+                event_radar, "REPORT_PATH", temporary / "report.md"
+            ), patch.object(event_radar, "PUBLIC_REPORT_PATH", temporary / "public.html"), patch.object(
+                event_radar, "SHARE_CARD_PATH", temporary / "card.html"
+            ), patch.object(event_radar, "fetch_market", return_value=market("1", 0.2, 0.22)), patch.object(
+                event_radar.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    [], 0, stdout="", stderr=""
+                )
+            ) as publish, patch.object(
+                event_radar.notify, "push", return_value={"ok": True, "reason": "sent"}
+            ) as push:
+                code = event_radar.run(
+                    ["--config", str(config_path)], now=NOW.replace(hour=0, minute=5)
+                )
+        self.assertEqual(code, 0)
+        publish.assert_called_once()
+        self.assertEqual(publish.call_args.args[0][1], "https://example.com/event-radar.png")
+        push.assert_called_once()
+
+    def test_public_page_omits_empty_share_link(self) -> None:
+        config = event([{"market_id": "1", "outcome": "Yes", "label": "Yes"}])
+        snapshot = event_radar.build_snapshot(
+            config, {"1": market("1", 0.2, 0.22)}, NOW
+        )
+        page = event_radar.build_public_page([snapshot], [], NOW, "")
+        self.assertNotIn("undefined", page)
+        self.assertNotIn("null", page)
 
     def test_dry_run_does_not_write_state_or_notify(self) -> None:
         config = event([{"market_id": "1", "outcome": "Yes", "label": "Yes"}])

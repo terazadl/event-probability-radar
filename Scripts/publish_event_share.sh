@@ -3,20 +3,36 @@
 # 该脚本不重新抓取市场，确保图片与本次日报使用同一批数据。
 set -euo pipefail
 
-SYSTEM_DIR="/Users/tera/Projects/toushi-system"
-BLOG_DIR="${TERA_EVENT_BLOG_DIR:-/Users/tera/Desktop/My pages/ObsidianVault/outputs/terazadl-publish}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SYSTEM_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+BLOG_DIR="${TERA_EVENT_BLOG_DIR:-}"
+BLOG_REPO_URL="${TERA_EVENT_BLOG_REPO_URL:-}"
+BLOG_PAGES_BRANCH="${TERA_EVENT_BLOG_PAGES_BRANCH:-master}"
 PUBLIC_HTML="$SYSTEM_DIR/Reports/事件概率雷达·公开快照.html"
 CARD_HTML="$SYSTEM_DIR/Reports/事件概率雷达·分享卡片.html"
 CARD_PNG="$SYSTEM_DIR/Reports/事件概率雷达·分享卡片.png"
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-IMAGE_URL="${1:-https://terazadl.github.io/images/event-radar-latest.png}"
+CHROME="${EVENT_RADAR_CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
+IMAGE_URL="${1:-}"
 CACHE_KEY="${2:-$(date '+%Y%m%d%H%M')}"
 
-export PATH="/Users/tera/.local/bin:/Users/tera/.nvm/versions/node/v24.14.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+USER_HOME="${HOME:-}"
+if [[ -n "${EVENT_RADAR_NODE_BIN:-}" ]]; then
+  export PATH="$EVENT_RADAR_NODE_BIN:$PATH"
+elif [[ -n "$USER_HOME" && -d "$USER_HOME/.local/bin" ]]; then
+  export PATH="$USER_HOME/.local/bin:$PATH"
+fi
 NPM="$(command -v npm || true)"
 
 if [[ ! -s "$PUBLIC_HTML" || ! -s "$CARD_HTML" ]]; then
   echo "缺少当前日报页面或分享卡片，请先生成 Reports 文件。" >&2
+  exit 2
+fi
+if [[ -z "$BLOG_DIR" ]]; then
+  echo "请设置 TERA_EVENT_BLOG_DIR 指向 Hexo 博客目录。" >&2
+  exit 2
+fi
+if [[ -z "$BLOG_REPO_URL" ]]; then
+  echo "请设置 TERA_EVENT_BLOG_REPO_URL，避免误推送到错误仓库。" >&2
   exit 2
 fi
 if [[ ! -d "$BLOG_DIR/source" ]]; then
@@ -30,6 +46,10 @@ fi
 if [[ -z "$NPM" ]]; then
   echo "找不到 npm，无法构建公开页面。" >&2
   exit 127
+fi
+if [[ -z "$IMAGE_URL" ]]; then
+  echo "请提供公开图片 URL 作为第一个参数。" >&2
+  exit 2
 fi
 
 task_temp_dir="$(mktemp -d /private/tmp/terazadl-event-share-XXXXXX)"
@@ -85,10 +105,19 @@ if [[ ! -s "$BLOG_DIR/public/event-radar/index.html" || ! -s "$BLOG_DIR/public/i
   exit 1
 fi
 
-git -C "$BLOG_DIR" fetch origin master:refs/remotes/origin/master
+if ! git -C "$BLOG_DIR" remote get-url origin >/dev/null 2>&1; then
+  git -C "$BLOG_DIR" remote add origin "$BLOG_REPO_URL"
+else
+  blog_origin="$(git -C "$BLOG_DIR" remote get-url origin)"
+  if [[ "$blog_origin" != "$BLOG_REPO_URL" ]]; then
+    echo "博客 origin 与 TERA_EVENT_BLOG_REPO_URL 不一致：$blog_origin" >&2
+    exit 2
+  fi
+fi
+git -C "$BLOG_DIR" fetch origin "$BLOG_PAGES_BRANCH:refs/remotes/origin/$BLOG_PAGES_BRANCH"
 worktree_dir="$(mktemp -d /private/tmp/terazadl-pages-master-XXXXXX)"
 rmdir "$worktree_dir"
-git -C "$BLOG_DIR" worktree add --detach "$worktree_dir" origin/master
+git -C "$BLOG_DIR" worktree add --detach "$worktree_dir" "origin/$BLOG_PAGES_BRANCH"
 mkdir -p "$worktree_dir/event-radar" "$worktree_dir/images"
 cp "$BLOG_DIR/public/event-radar/index.html" "$worktree_dir/event-radar/index.html"
 cp "$BLOG_DIR/public/images/event-radar-latest.png" "$worktree_dir/images/event-radar-latest.png"
@@ -98,7 +127,7 @@ if git -C "$worktree_dir" diff --cached --quiet; then
   echo "[SHARE] 公开文件没有变化，继续校验现有图片。"
 else
   git -C "$worktree_dir" commit -m "Refresh event radar daily snapshot"
-  git -C "$worktree_dir" push origin HEAD:master
+  git -C "$worktree_dir" push origin "HEAD:$BLOG_PAGES_BRANCH"
 fi
 
 separator='?'

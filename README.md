@@ -88,7 +88,7 @@ Send a full daily digest for acceptance testing:
 bash Scripts/run_event_radar.sh --daily-now
 ```
 
-ServerChan can render Markdown images, but the image must be available at a public URL. Set the public page and image after you host the exported assets:
+ServerChan can render Markdown images, but the image must be available at a public URL. Set both URLs only after you have configured a publishing target:
 
 ```json
 {
@@ -97,6 +97,8 @@ ServerChan can render Markdown images, but the image must be available at a publ
   "public_image_url": "https://example.com/event-radar-latest.png"
 }
 ```
+
+When `public_share_enabled` is `true`, the daily digest publishes the current HTML snapshot and share card before sending. It sends only after the public image matches the locally generated image by SHA-256; a missing configuration, failed build, failed push, or stale CDN response blocks the digest.
 
 ## Events, alerts, and scheduling
 
@@ -119,13 +121,26 @@ Invoke the runner from any scheduler every 15 minutes. The process itself applie
 
 ## Share assets
 
-On macOS with Google Chrome installed, export a standalone HTML snapshot and a 1080×1350 share card:
+On macOS with Google Chrome installed, export a standalone HTML snapshot and a 1080×1350 share card locally:
 
 ```bash
-bash Scripts/export_event_share.sh
+bash Scripts/export_event_share.sh                 # writes to exports/
+bash Scripts/export_event_share.sh /tmp/radar-out  # choose an output directory
 ```
 
-The command writes both files to `exports/` by default. Upload them to a public host before enabling image links in ServerChan.
+The command does not publish or send notifications. For the automated public-image flow, configure the environment inherited by your scheduler:
+
+```bash
+export TERA_EVENT_BLOG_DIR="/absolute/path/to/your/hexo-blog"
+export TERA_EVENT_BLOG_REPO_URL="https://github.com/you/your-pages-repo.git"
+export TERA_EVENT_BLOG_PAGES_BRANCH="master"
+export EVENT_RADAR_NODE_BIN="/absolute/path/to/node/bin"  # optional
+bash Scripts/publish_event_share.sh \
+  "https://example.com/images/event-radar-latest.png" \
+  "202608130800"
+```
+
+The publisher updates only `event-radar/index.html` and `images/event-radar-latest.png` on the configured Pages branch. Keep the environment variables available to the scheduled `run_event_radar.sh` process; interactive-shell exports are not inherited by `launchd` or cron automatically.
 
 ## Audit and privacy boundaries
 
@@ -139,7 +154,8 @@ Before public use, independently verify the selected contract’s liquidity, res
 - [`Scripts/notify.py`](Scripts/notify.py) — ServerChan delivery, graceful failure, and deduplication.
 - [`Config/event_watchlist.json`](Config/event_watchlist.json) — events, quality requirements, and alert rules.
 - [`Tests/test_event_radar.py`](Tests/test_event_radar.py) — probability, alert, daily-digest, image, and read-only-boundary tests.
-- [`Scripts/export_event_share.sh`](Scripts/export_event_share.sh) — HTML snapshot and share-card export.
+- [`Scripts/export_event_share.sh`](Scripts/export_event_share.sh) — local HTML snapshot and share-card export.
+- [`Scripts/publish_event_share.sh`](Scripts/publish_event_share.sh) — optional Pages publication and public-image verification before a digest.
 
 ## License
 

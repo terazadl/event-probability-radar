@@ -904,9 +904,10 @@ def build_public_page(
             )
     summary = "｜".join(summary_bits)
     cards = "".join(public_event_html(snapshot) for snapshot in snapshots)
-    summary_json = json.dumps(
-        share_summary_text(snapshots, checked_at) + f"\n{public_url}", ensure_ascii=False
-    )
+    summary_text = share_summary_text(snapshots, checked_at)
+    if public_url:
+        summary_text += f"\n{public_url}"
+    summary_json = json.dumps(summary_text, ensure_ascii=False)
     title_json = json.dumps(f"{PRODUCT_NAME_ZH}｜霍尔木兹与美联储", ensure_ascii=False)
     failure_note = ""
     if failures:
@@ -1150,10 +1151,7 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
             f"{format_money(snapshot['liquidity_usd'])})"
         )
 
-    public_page_url = (
-        str(config.get("public_share_url", "")).strip()
-        or "https://terazadl.github.io/event-radar/"
-    )
+    public_page_url = str(config.get("public_share_url", "")).strip()
     public_share_url = (
         str(config.get("public_share_url", "")).strip()
         if config.get("public_share_enabled") else ""
@@ -1180,36 +1178,36 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
         and config.get("public_share_enabled")
         and digest_data_ready
     ):
-        write_report_artifacts(
-            snapshots, failures, current_time, public_page_url
-        )
-        share_cache_key = current_time.astimezone(
-            ZoneInfo(CUSTOMER_TIMEZONE_NAME)
-        ).strftime("%Y%m%d%H%M")
-        try:
-            publish_result = subprocess.run(
-                [
-                    str(PUBLISH_SHARE_SCRIPT),
-                    public_image_url or "https://terazadl.github.io/images/event-radar-latest.png",
-                    share_cache_key,
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=660,
-            )
-            publish_error = (
-                publish_result.stderr.strip()
-                or publish_result.stdout.strip()
-                or f"退出码 {publish_result.returncode}"
-            )[:1000] if publish_result.returncode else None
-        except subprocess.TimeoutExpired:
-            publish_result = None
-            publish_error = "图片发布与公开 URL 校验超过11分钟"
-        if publish_error:
+        write_report_artifacts(snapshots, failures, current_time, public_page_url)
+        if not public_share_url or not public_image_url:
             share_publish_error = (
-                publish_error
-            )[:1000]
+                "已启用公开分享，但未同时配置 public_share_url 和 public_image_url"
+            )
+        elif not PUBLISH_SHARE_SCRIPT.is_file():
+            share_publish_error = f"缺少图片发布脚本：{PUBLISH_SHARE_SCRIPT}"
+        else:
+            share_cache_key = current_time.astimezone(
+                ZoneInfo(CUSTOMER_TIMEZONE_NAME)
+            ).strftime("%Y%m%d%H%M")
+            try:
+                publish_result = subprocess.run(
+                    [str(PUBLISH_SHARE_SCRIPT), public_image_url, share_cache_key],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=660,
+                )
+                publish_error = (
+                    publish_result.stderr.strip()
+                    or publish_result.stdout.strip()
+                    or f"退出码 {publish_result.returncode}"
+                )[:1000] if publish_result.returncode else None
+            except subprocess.TimeoutExpired:
+                publish_error = "图片发布与公开 URL 校验超过11分钟"
+            except OSError as exc:
+                publish_error = f"无法启动图片发布脚本：{exc}"
+            share_publish_error = publish_error
+        if share_publish_error:
             print(f"[FAIL] 分享图片发布失败：{share_publish_error}", file=sys.stderr)
         else:
             print("[SHARE] 今日分享图片已发布，开始发送日报。")
@@ -1241,6 +1239,13 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
         if notification_result.get("ok") and not args.dry_run:
             mark_alert_candidates_sent(candidates)
 
+    if share_publish_error:
+        notification_result = {
+            "ok": False,
+            "reason": f"分享图片发布失败：{share_publish_error}",
+            "kind": "daily_digest_blocked",
+        }
+
     audit = {
         "checked_at": isoformat_utc(current_time),
         "snapshots": snapshots,
@@ -1262,12 +1267,6 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
 
     for failure in failures:
         print(f"[FAIL] {failure['event_id']}：{failure['error']}", file=sys.stderr)
-    if share_publish_error:
-        notification_result = {
-            "ok": False,
-            "reason": f"分享图片发布失败：{share_publish_error}",
-            "kind": "daily_digest_blocked",
-        }
     if not notification_result.get("ok"):
         print(f"[FAIL] 通知：{notification_result.get('reason')}", file=sys.stderr)
     return 1 if failures or not notification_result.get("ok") else 0
