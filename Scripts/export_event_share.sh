@@ -1,15 +1,15 @@
 #!/bin/bash
-# 生成公开快照和1080×1350分享图；不发送通知，也不改雷达状态。
+# 生成公开快照和 1080×1350 分享图；不发送通知，也不改雷达状态。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SYSTEM_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PYTHON="$SYSTEM_DIR/.venv/bin/python3"
-OUTPUT_DIR="${1:-$SYSTEM_DIR/exports}"
 PUBLIC_HTML="$SYSTEM_DIR/Reports/事件概率雷达·公开快照.html"
 CARD_HTML="$SYSTEM_DIR/Reports/事件概率雷达·分享卡片.html"
+OUTPUT_DIR="${1:-$SYSTEM_DIR/exports}"
 CARD_PNG="$OUTPUT_DIR/polymarket-observatory.png"
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+CHROME="${EVENT_RADAR_CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 
 if [[ ! -x "$PYTHON" ]]; then
   echo "缺少项目 Python 环境：$PYTHON" >&2
@@ -39,7 +39,6 @@ TEMP_CARD_PNG="$TASK_TEMP_DIR/event-radar-latest.png"
   "file://$CARD_HTML" &
 CHROME_PID=$!
 
-# 某些 macOS Chrome 版本截图后仍保留后台进程；图片落盘后主动结束该临时实例。
 for _ in {1..25}; do
   if [[ -s "$TEMP_CARD_PNG" ]]; then
     break
@@ -56,7 +55,6 @@ if [[ ! -s "$TEMP_CARD_PNG" ]]; then
 fi
 mkdir -p "$OUTPUT_DIR"
 cp "$TEMP_CARD_PNG" "$CARD_PNG"
-
 cp "$PUBLIC_HTML" "$OUTPUT_DIR/polymarket-observatory.html"
 
 echo "公开页面：$OUTPUT_DIR/polymarket-observatory.html"
