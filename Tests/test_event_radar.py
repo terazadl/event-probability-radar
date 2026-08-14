@@ -368,25 +368,45 @@ class EventRadarTests(unittest.TestCase):
         self.assertIn("Polymarket观测站", page)
         self.assertIn("非官方观测工具", page)
 
-    def test_daily_digest_is_due_only_in_eight_oclock_beijing_window(self) -> None:
+    def test_daily_digest_is_due_in_two_hour_eight_oclock_beijing_window(self) -> None:
         config = {
             "daily_digest": {
                 "enabled": True,
                 "timezone": "Asia/Shanghai",
                 "hour": 8,
                 "minute": 0,
-                "send_window_minutes": 60,
+                "send_window_minutes": 120,
             }
         }
         before = datetime(2026, 8, 11, 23, 59, tzinfo=timezone.utc)
         at_eight = datetime(2026, 8, 12, 0, 0, tzinfo=timezone.utc)
-        after_window = datetime(2026, 8, 12, 1, 0, tzinfo=timezone.utc)
+        within_catch_up_window = datetime(2026, 8, 12, 1, 30, tzinfo=timezone.utc)
+        after_window = datetime(2026, 8, 12, 2, 0, tzinfo=timezone.utc)
         self.assertFalse(event_radar.daily_digest_due(config, {}, before))
         self.assertTrue(event_radar.daily_digest_due(config, {}, at_eight))
+        self.assertTrue(event_radar.daily_digest_due(config, {}, within_catch_up_window))
         self.assertFalse(event_radar.daily_digest_due(config, {}, after_window))
         self.assertFalse(event_radar.daily_digest_due(
             config, {"last_daily_digest_date": "2026-08-12"}, at_eight
         ))
+
+    def test_daily_digest_marks_catch_up_delivery_as_delayed(self) -> None:
+        config = {
+            "daily_digest": {
+                "enabled": True,
+                "timezone": "Asia/Shanghai",
+                "hour": 8,
+                "minute": 0,
+                "send_window_minutes": 120,
+            }
+        }
+        on_time = datetime(2026, 8, 12, 0, 0, tzinfo=timezone.utc)
+        catch_up = datetime(2026, 8, 12, 0, 35, tzinfo=timezone.utc)
+        self.assertIsNone(event_radar.daily_digest_delivery_note(config, on_time))
+        note = event_radar.daily_digest_delivery_note(config, catch_up)
+        self.assertIn("延迟发送", note)
+        self.assertIn("原定北京时间08:00", note)
+        self.assertIn("实际发送时间为08:35", note)
 
     def test_daily_digest_shows_full_distribution_and_merges_anomaly(self) -> None:
         scalar_config = event([
@@ -434,6 +454,21 @@ class EventRadarTests(unittest.TestCase):
         )
         for row in fed["outcomes"]:
             self.assertIn(row["label_zh"], body)
+
+    def test_daily_digest_can_fall_back_to_text_when_image_publish_fails(self) -> None:
+        config = event([
+            {"market_id": "10", "outcome": "No", "label": "仍未恢复"}
+        ])
+        snapshot = event_radar.build_snapshot(
+            config, {"10": market("10", 0.03, 0.05)}, NOW
+        )
+        _, body = event_radar.build_daily_digest(
+            [snapshot],
+            NOW,
+            image_note="分享图片暂未更新，本次先发送文字版；图片需要单独重试发布。",
+        )
+        self.assertIn("分享图片暂未更新", body)
+        self.assertNotIn("![Polymarket观测站每日快照]", body)
 
     def test_daily_digest_is_sent_and_persisted_once_per_day(self) -> None:
         radar_event = event([

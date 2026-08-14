@@ -660,7 +660,11 @@ def build_notification(
 
 
 def daily_digest_due(config: dict, state: dict, now: datetime) -> bool:
-    """在设定的本地时间窗口内，每个自然日最多返回一次 True。"""
+    """在设定的本地时间窗口内，每个自然日最多返回一次 True。
+
+    窗口用于吸收数据源短暂不可用、网络抖动或电脑唤醒延迟；同一自然日
+    仍由 ``last_daily_digest_date`` 保证最多发送一次。
+    """
     settings = config.get("daily_digest", {})
     if not settings.get("enabled"):
         return False
@@ -677,9 +681,28 @@ def daily_digest_due(config: dict, state: dict, now: datetime) -> bool:
     )
 
 
+def daily_digest_delivery_note(config: dict, now: datetime) -> Optional[str]:
+    """返回迟到说明；准点（或窗口开始前）发送时返回 None。"""
+    settings = config.get("daily_digest", {})
+    digest_timezone = settings.get("timezone", CUSTOMER_TIMEZONE_NAME)
+    local_time = now.astimezone(ZoneInfo(digest_timezone))
+    scheduled_hour = int(settings.get("hour", 8))
+    scheduled_minute = int(settings.get("minute", 0))
+    scheduled_total = scheduled_hour * 60 + scheduled_minute
+    current_total = local_time.hour * 60 + local_time.minute
+    if current_total <= scheduled_total:
+        return None
+    return (
+        f"⚠️ 本日报为延迟发送，原定北京时间"
+        f"{scheduled_hour:02d}:{scheduled_minute:02d}，"
+        f"实际发送时间为{local_time:%H:%M}。"
+    )
+
+
 def build_daily_digest(
     snapshots: list[dict], checked_at: datetime, candidates: Optional[list[dict]] = None,
     share_url: Optional[str] = None, image_url: Optional[str] = None,
+    image_note: Optional[str] = None, delivery_note: Optional[str] = None,
 ) -> tuple[str, str]:
     local_time = checked_at.astimezone(ZoneInfo(CUSTOMER_TIMEZONE_NAME))
     title = f"{PRODUCT_NAME_ZH}早报｜{local_time.month}月{local_time.day}日"
@@ -691,12 +714,16 @@ def build_daily_digest(
         "# 今日事件概率",
         "> 每天北京时间08:00固定更新；其余时间仅在达到异常阈值时即时提醒。",
     ]
+    if delivery_note:
+        sections.append(f"> {delivery_note}")
     if image_url:
         separator = "&" if "?" in image_url else "?"
         cache_key = local_time.strftime("%Y%m%d%H%M")
         sections.append(
             f"![{PRODUCT_NAME_ZH}每日快照]({image_url}{separator}v={cache_key})"
         )
+    elif image_note:
+        sections.append(f"> ⚠️ {image_note}")
     for snapshot in snapshots:
         triggers = trigger_map.get(snapshot["event_id"], [])
         alert_line = ""
@@ -1213,15 +1240,21 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
             print(f"[FAIL] 分享图片发布失败：{share_publish_error}", file=sys.stderr)
         else:
             print("[SHARE] 今日分享图片已发布，开始发送日报。")
-    digest_ready = (
-        digest_due
-        and digest_data_ready
-        and share_publish_error is None
-    )
+    # 图片是增强项，不应阻断已经通过数据质量检查的文字晨报。
+    # 图片发布失败时发送不带图片的文字版，并把失败原因写入消息。
+    digest_ready = digest_due and digest_data_ready
     if digest_ready:
+        image_note = None
+        digest_image_url = public_image_url or None
+        if share_publish_error:
+            digest_image_url = None
+            image_note = "分享图片暂未更新，本次先发送文字版；图片需要单独重试发布。"
+        delivery_note = daily_digest_delivery_note(config, current_time)
         title, body = build_daily_digest(
             snapshots, current_time, candidates, public_share_url or None,
-            public_image_url or None,
+            digest_image_url,
+            image_note,
+            delivery_note,
         )
         notification_result = notify.push(title, body, dry_run=args.dry_run)
         notification_result["kind"] = "daily_digest"
@@ -1263,11 +1296,7 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
     for failure in failures:
         print(f"[FAIL] {failure['event_id']}：{failure['error']}", file=sys.stderr)
     if share_publish_error:
-        notification_result = {
-            "ok": False,
-            "reason": f"分享图片发布失败：{share_publish_error}",
-            "kind": "daily_digest_blocked",
-        }
+        print(f"[WARN] 分享图片发布失败，但文字日报继续发送：{share_publish_error}", file=sys.stderr)
     if not notification_result.get("ok"):
         print(f"[FAIL] 通知：{notification_result.get('reason')}", file=sys.stderr)
     return 1 if failures or not notification_result.get("ok") else 0
