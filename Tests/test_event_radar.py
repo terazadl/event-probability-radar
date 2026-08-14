@@ -369,25 +369,45 @@ class EventRadarTests(unittest.TestCase):
         self.assertIn("Polymarket观测站", page)
         self.assertIn("非官方观测工具", page)
 
-    def test_daily_digest_is_due_only_in_eight_oclock_beijing_window(self) -> None:
+    def test_daily_digest_is_due_in_two_hour_eight_oclock_beijing_window(self) -> None:
         config = {
             "daily_digest": {
                 "enabled": True,
                 "timezone": "Asia/Shanghai",
                 "hour": 8,
                 "minute": 0,
-                "send_window_minutes": 60,
+                "send_window_minutes": 120,
             }
         }
         before = datetime(2026, 8, 11, 23, 59, tzinfo=timezone.utc)
         at_eight = datetime(2026, 8, 12, 0, 0, tzinfo=timezone.utc)
-        after_window = datetime(2026, 8, 12, 1, 0, tzinfo=timezone.utc)
+        within_catch_up_window = datetime(2026, 8, 12, 1, 30, tzinfo=timezone.utc)
+        after_window = datetime(2026, 8, 12, 2, 0, tzinfo=timezone.utc)
         self.assertFalse(event_radar.daily_digest_due(config, {}, before))
         self.assertTrue(event_radar.daily_digest_due(config, {}, at_eight))
+        self.assertTrue(event_radar.daily_digest_due(config, {}, within_catch_up_window))
         self.assertFalse(event_radar.daily_digest_due(config, {}, after_window))
         self.assertFalse(event_radar.daily_digest_due(
             config, {"last_daily_digest_date": "2026-08-12"}, at_eight
         ))
+
+    def test_daily_digest_marks_catch_up_delivery_as_delayed(self) -> None:
+        config = {
+            "daily_digest": {
+                "enabled": True,
+                "timezone": "Asia/Shanghai",
+                "hour": 8,
+                "minute": 0,
+                "send_window_minutes": 120,
+            }
+        }
+        on_time = datetime(2026, 8, 12, 0, 0, tzinfo=timezone.utc)
+        catch_up = datetime(2026, 8, 12, 0, 35, tzinfo=timezone.utc)
+        self.assertIsNone(event_radar.daily_digest_delivery_note(config, on_time))
+        note = event_radar.daily_digest_delivery_note(config, catch_up)
+        self.assertIn("延迟发送", note)
+        self.assertIn("原定北京时间08:00", note)
+        self.assertIn("实际发送时间为08:35", note)
 
     def test_daily_digest_shows_full_distribution_and_merges_anomaly(self) -> None:
         scalar_config = event([
@@ -447,7 +467,7 @@ class EventRadarTests(unittest.TestCase):
                 "timezone": "Asia/Shanghai",
                 "hour": 8,
                 "minute": 0,
-                "send_window_minutes": 60,
+                "send_window_minutes": 120,
             },
             "events": [radar_event],
         }
@@ -495,7 +515,7 @@ class EventRadarTests(unittest.TestCase):
                 "timezone": "Asia/Shanghai",
                 "hour": 8,
                 "minute": 0,
-                "send_window_minutes": 60,
+                "send_window_minutes": 120,
             },
             "public_share_enabled": True,
             "public_share_url": "",
@@ -512,15 +532,18 @@ class EventRadarTests(unittest.TestCase):
                 event_radar, "PUBLIC_REPORT_PATH", temporary / "public.html"
             ), patch.object(event_radar, "SHARE_CARD_PATH", temporary / "card.html"), patch.object(
                 event_radar, "fetch_market", return_value=market("1", 0.2, 0.22)
-            ), patch.object(event_radar.notify, "push") as push:
+            ), patch.object(
+                event_radar.notify, "push", return_value={"ok": True, "reason": "sent"}
+            ) as push:
                 code = event_radar.run(
                     ["--config", str(config_path)], now=NOW.replace(hour=0, minute=5)
                 )
             history = list((temporary / "history").glob("*.jsonl"))
             audit = json.loads(history[0].read_text(encoding="utf-8").splitlines()[0])
-        self.assertEqual(code, 1)
-        push.assert_not_called()
-        self.assertEqual(audit["notification"]["kind"], "daily_digest_blocked")
+        self.assertEqual(code, 0)
+        push.assert_called_once()
+        self.assertEqual(audit["notification"]["kind"], "daily_digest")
+        self.assertIn("分享图片暂未更新", push.call_args.args[1])
 
     def test_public_digest_publishes_before_sending(self) -> None:
         radar_event = event([

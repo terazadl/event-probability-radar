@@ -6,7 +6,7 @@
     "timezone": "Asia/Shanghai",
     "hour": 8,
     "minute": 0,
-    "send_window_minutes": 60
+    "send_window_minutes": 120
   },
   "public_share_enabled": false,
   "public_share_url": "",

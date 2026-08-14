@@ -8,6 +8,7 @@ SYSTEM_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BLOG_DIR="${TERA_EVENT_BLOG_DIR:-}"
 BLOG_REPO_URL="${TERA_EVENT_BLOG_REPO_URL:-}"
 BLOG_PAGES_BRANCH="${TERA_EVENT_BLOG_PAGES_BRANCH:-master}"
+PAGES_REPO="${TERA_EVENT_PAGES_REPO:-$BLOG_REPO_URL}"
 PUBLIC_HTML="$SYSTEM_DIR/Reports/事件概率雷达·公开快照.html"
 CARD_HTML="$SYSTEM_DIR/Reports/事件概率雷达·分享卡片.html"
 CARD_PNG="$SYSTEM_DIR/Reports/事件概率雷达·分享卡片.png"
@@ -53,11 +54,9 @@ if [[ -z "$IMAGE_URL" ]]; then
 fi
 
 task_temp_dir="$(mktemp -d /private/tmp/terazadl-event-share-XXXXXX)"
-worktree_dir=""
+build_dir="$task_temp_dir/blog"
+pages_dir="$task_temp_dir/pages-master"
 cleanup() {
-  if [[ -n "$worktree_dir" && -d "$worktree_dir" ]]; then
-    git -C "$BLOG_DIR" worktree remove --force "$worktree_dir" >/dev/null 2>&1 || true
-  fi
   rm -rf "$task_temp_dir"
 }
 trap cleanup EXIT
@@ -92,15 +91,20 @@ if [[ ! -s "$temp_card_png" ]]; then
 fi
 cp "$temp_card_png" "$CARD_PNG"
 
-mkdir -p "$BLOG_DIR/source/event-radar" "$BLOG_DIR/source/images"
-cp "$PUBLIC_HTML" "$BLOG_DIR/source/event-radar/index.html"
-cp "$CARD_PNG" "$BLOG_DIR/source/images/event-radar-latest.png"
+# launchd 可能没有 macOS Desktop 的自动化写入权限。复制到临时构建目录，
+# 避免把日报发布绑定到直接改写 Desktop 下的 Hexo source/public。
+mkdir -p "$build_dir"
+rsync -a --exclude='.git' --exclude='.deploy_git' --exclude='public' \
+  "$BLOG_DIR/" "$build_dir/"
+mkdir -p "$build_dir/source/event-radar" "$build_dir/source/images"
+cp "$PUBLIC_HTML" "$build_dir/source/event-radar/index.html"
+cp "$CARD_PNG" "$build_dir/source/images/event-radar-latest.png"
 
-if ! (cd "$BLOG_DIR" && "$NPM" run build); then
+if ! (cd "$build_dir" && "$NPM" run build); then
   echo "Hexo 构建失败，未发送日报。" >&2
   exit 1
 fi
-if [[ ! -s "$BLOG_DIR/public/event-radar/index.html" || ! -s "$BLOG_DIR/public/images/event-radar-latest.png" ]]; then
+if [[ ! -s "$build_dir/public/event-radar/index.html" || ! -s "$build_dir/public/images/event-radar-latest.png" ]]; then
   echo "Hexo 构建后缺少事件雷达发布文件。" >&2
   exit 1
 fi
@@ -114,20 +118,17 @@ else
     exit 2
   fi
 fi
-git -C "$BLOG_DIR" fetch origin "$BLOG_PAGES_BRANCH:refs/remotes/origin/$BLOG_PAGES_BRANCH"
-worktree_dir="$(mktemp -d /private/tmp/terazadl-pages-master-XXXXXX)"
-rmdir "$worktree_dir"
-git -C "$BLOG_DIR" worktree add --detach "$worktree_dir" "origin/$BLOG_PAGES_BRANCH"
-mkdir -p "$worktree_dir/event-radar" "$worktree_dir/images"
-cp "$BLOG_DIR/public/event-radar/index.html" "$worktree_dir/event-radar/index.html"
-cp "$BLOG_DIR/public/images/event-radar-latest.png" "$worktree_dir/images/event-radar-latest.png"
+git clone --quiet --branch "$BLOG_PAGES_BRANCH" --single-branch "$PAGES_REPO" "$pages_dir"
+mkdir -p "$pages_dir/event-radar" "$pages_dir/images"
+cp "$build_dir/public/event-radar/index.html" "$pages_dir/event-radar/index.html"
+cp "$build_dir/public/images/event-radar-latest.png" "$pages_dir/images/event-radar-latest.png"
 
-git -C "$worktree_dir" add event-radar/index.html images/event-radar-latest.png
-if git -C "$worktree_dir" diff --cached --quiet; then
+git -C "$pages_dir" add event-radar/index.html images/event-radar-latest.png
+if git -C "$pages_dir" diff --cached --quiet; then
   echo "[SHARE] 公开文件没有变化，继续校验现有图片。"
 else
-  git -C "$worktree_dir" commit -m "Refresh event radar daily snapshot"
-  git -C "$worktree_dir" push origin "HEAD:$BLOG_PAGES_BRANCH"
+  git -C "$pages_dir" commit -m "Refresh event radar daily snapshot"
+  git -C "$pages_dir" push origin "HEAD:$BLOG_PAGES_BRANCH"
 fi
 
 separator='?'
@@ -135,7 +136,7 @@ if [[ "$IMAGE_URL" == *\?* ]]; then
   separator='&'
 fi
 probe_url="${IMAGE_URL}${separator}v=${CACHE_KEY}"
-expected_hash="$(shasum -a 256 "$BLOG_DIR/public/images/event-radar-latest.png" | awk '{print $1}')"
+expected_hash="$(shasum -a 256 "$build_dir/public/images/event-radar-latest.png" | awk '{print $1}')"
 probe_path="$task_temp_dir/public-image.png"
 for _ in {1..24}; do
   if curl -fsSL --max-time 20 "$probe_url" -o "$probe_path"; then
