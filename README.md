@@ -141,6 +141,101 @@ Before public use, independently verify the selected contract’s liquidity, res
 - [`Tests/test_event_radar.py`](Tests/test_event_radar.py) — probability, alert, daily-digest, image, and read-only-boundary tests.
 - [`Scripts/export_event_share.sh`](Scripts/export_event_share.sh) — HTML snapshot and share-card export.
 
+## Nasdaq-100 QDII subscription radar (new)
+
+The repository now also contains a separate, read-only monitor for RMB-denominated
+Nasdaq-100 QDII funds in the direct-sales monitoring universe. It deliberately uses
+the same notification module but a different data model:
+
+```text
+Official direct-sales page / notice
+              │
+              ▼
+Status normalization (open / limited / suspended / overseas holiday / unconfirmed)
+              │
+              ├── Full table grouped by current status
+              ├── Cross-group “今日变化” badge (no duplicate rows)
+              ├── 08:00 Beijing-time summary
+              └── Long share-card HTML for a complete image
+```
+
+Run a safe preview:
+
+```bash
+python3 Scripts/qdii_radar.py --daily-now --dry-run
+python3 Scripts/qdii_radar.py --export-share
+```
+
+On macOS with Chrome installed, render the share card as a PNG:
+
+```bash
+bash Scripts/export_qdii_share.sh
+```
+
+To update the public Release image and send the concise ServerChan digest with
+the full 41-share image attached:
+
+```bash
+bash Scripts/push_qdii_daily.sh
+```
+
+Real sends are review-gated. The scheduler refreshes the secondary discovery snapshot,
+checks conflicts, and refuses to notify while any included row is still pending
+manager-source verification. The publish script keeps both a stable asset and a
+date-versioned image (`nasdaq100-qdii-radar-YYYYMMDD.png`), then verifies the
+versioned asset hash before sending so WeChat does not reuse yesterday's image.
+`--dry-run` remains available for diagnostics. A one-off manual acceptance test can
+explicitly opt into pending rows with `QDII_ALLOW_REVIEW_PENDING=1`; scheduled runs
+should leave this unset.
+
+The QDII watchlist is configured in [`Config/qdii_watchlist.json`](Config/qdii_watchlist.json).
+The included [`Config/qdii_universe_template.csv`](Config/qdii_universe_template.csv)
+contains the current 41-code monitoring universe. The attached image covers every
+RMB-denominated OTC share class in that universe and lists the displayed daily quota.
+The message body stays short: total coverage, counts by current status, and today's
+changes. Manager direct-platform pages and notices are preferred. When a manager page
+is unavailable, an exact notice reproduced by a designated information-disclosure
+publication may be used with source mode `official_notice_publication`; it must still
+carry an effective date. Rows temporarily using a public fund-detail page stay in the
+report with an explicit source label, so they are not presented as manager-direct data.
+If a source cannot be read, the radar keeps the last configured baseline and marks
+the row as stale; if wording cannot be classified, it does not overwrite the baseline.
+
+The daily message is intentionally a summary (counts plus status changes); the attached
+image/report carries the full monitoring universe. A displayed open state does
+not guarantee that a particular account can place an order,
+and “未披露” is not the same as “unlimited”.
+
+Within each status section, limited-subscription rows are sorted by verified direct-sales
+quota from high to low; pending-review rows are placed last. Status remains the primary
+grouping, because a larger quota does not make a suspended fund investable.
+
+The monitoring scope is intentionally `onshore_otc_rmb`: the secondary reference page
+may list additional on-exchange shares and agency-only rows.  It is used for discovery
+and conflict detection only, never as a direct-sales quota source:
+
+```bash
+python3 Scripts/qdii_reference.py --live
+python3 Scripts/review_qdii_before_push.py --strict-reference
+```
+
+The reference snapshot is written separately to `Data/qdii/reference_latest.json`.
+The review gate blocks a push when an explicitly labelled secondary direct-sales value
+conflicts with the local manager source.  It does not rewrite the CSV automatically;
+the fund-manager page or notice must be checked before changing a row.  On a transient
+official-page failure, the radar retains the last configured value and marks that row
+as a stale baseline instead of generating a false status-change alert.
+
+Entry points:
+
+- [`Scripts/qdii_radar.py`](Scripts/qdii_radar.py) — status model, change detection, reports, and notifications.
+- [`Scripts/qdii_reference.py`](Scripts/qdii_reference.py) — secondary discovery parser for the public QDII table; never writes the main universe.
+- [`Scripts/review_qdii_before_push.py`](Scripts/review_qdii_before_push.py) — structural, source, and secondary-conflict review gate.
+- [`Scripts/run_qdii_radar.sh`](Scripts/run_qdii_radar.sh) — scheduler-friendly runner.
+- [`Scripts/export_qdii_share.sh`](Scripts/export_qdii_share.sh) — public HTML and full long-card export.
+- [`Scripts/push_qdii_daily.sh`](Scripts/push_qdii_daily.sh) — publish the full image and send the daily summary.
+- [`Tests/test_qdii_radar.py`](Tests/test_qdii_radar.py) — status, grouping, change badge, and summary tests.
+
 ## License
 
 [MIT](LICENSE)
