@@ -449,6 +449,32 @@ def display_sort_key(row: dict[str, Any]) -> tuple:
     )
 
 
+def quota_sort_key(row: dict[str, Any]) -> tuple:
+    """Order the daily full-universe view by usable quota, descending.
+
+    Rows without a currently usable numeric quota (normal/open without a
+    disclosed ceiling, suspended, closed, or unknown) stay at the bottom.
+    Pending-review rows are always last so an unverified number can never look
+    more actionable than a verified direct-sales quota.
+    """
+    pending_rank = 1 if row.get("review_status") == "待核验" else 0
+    status = row.get("status", STATUS_UNKNOWN)
+    usable_status = status not in {STATUS_SUSPENDED, STATUS_CLOSED, STATUS_UNKNOWN}
+    amount = parse_limit_rmb(row.get("purchase_limit_rmb")) if usable_status else None
+    undisclosed_rank = 1 if amount is None else 0
+    amount_rank = -amount if amount is not None else 0
+    status_rank = STATUS_ORDER.index(status) if status in STATUS_ORDER else len(STATUS_ORDER)
+    return (
+        pending_rank,
+        undisclosed_rank,
+        amount_rank,
+        status_rank,
+        str(row.get("manager", "")),
+        str(row.get("name", "")),
+        str(row.get("code", "")),
+    )
+
+
 def collect_fund(record: dict[str, Any], *, live: bool, checked_at: datetime) -> dict[str, Any]:
     row = dict(record)
     source_url = str(row.get("source_url") or "").strip()
@@ -609,6 +635,7 @@ def build_daily_digest(snapshot: dict[str, Any], *, image_url: str = "", public_
     lines = [
         f"# {PRODUCT_NAME_ZH}｜{report_date}",
         "> 每天北京时间08:00固定更新；其余时间仅在状态发生变化时提醒。",
+        "> 附图为全量额度排行：已核验直销额度从高到低，暂停/未披露/待核验置后。",
         "",
         f"日报时间：{report_date}｜数据时间：{customer_timestamp(checked)}",
         "",
@@ -791,17 +818,30 @@ def metric_html(label: str, value: Any) -> str:
     return f'<div class="qdii-metric"><strong>{html.escape(str(value))}</strong><span>{html.escape(label)}</span></div>'
 
 
-def build_public_page(snapshot: dict[str, Any], *, public_url: str = "", card: bool = False) -> str:
+def build_public_page(
+    snapshot: dict[str, Any],
+    *,
+    public_url: str = "",
+    card: bool = False,
+    sort_mode: str = "status",
+) -> str:
     checked = parse_timestamp(snapshot["checked_at"])
     sections = []
-    for status in STATUS_ORDER:
-        rows = sorted((row for row in snapshot["records"] if row["status"] == status), key=display_sort_key)
-        if not rows:
-            continue
+    if sort_mode == "quota":
+        rows = sorted(snapshot["records"], key=quota_sort_key)
         rows_html = "".join(html_row(row) for row in rows)
         sections.append(
-            f'<section class="qdii-section"><h2>{html.escape(status)}<small>{len(rows)} 项</small></h2>{rows_html}</section>'
+            f'<section class="qdii-section"><h2>额度排序（高→低）<small>{len(rows)} 项</small></h2>{rows_html}</section>'
         )
+    else:
+        for status in STATUS_ORDER:
+            rows = sorted((row for row in snapshot["records"] if row["status"] == status), key=display_sort_key)
+            if not rows:
+                continue
+            rows_html = "".join(html_row(row) for row in rows)
+            sections.append(
+                f'<section class="qdii-section"><h2>{html.escape(status)}<small>{len(rows)} 项</small></h2>{rows_html}</section>'
+            )
     summary = snapshot["counts"]
     summary_html = "".join([
         metric_html("全量人民币份额", snapshot["total"]),
@@ -831,7 +871,7 @@ def build_public_page(snapshot: dict[str, Any], *, public_url: str = "", card: b
 <header class="qdii-head"><div><p class="qdii-kicker">Nasdaq-100 QDII · Subscription Quota</p><h1 id="qdii-title">{PRODUCT_NAME_ZH}｜{customer_report_date(checked)}</h1></div><p class="qdii-time">日报时间<br><strong>{customer_report_date(checked)}</strong><br><small>{html.escape(customer_timestamp(checked))}</small></p></header>
 <div class="qdii-summary">{summary_html}</div>
 {''.join(sections)}
-<p class="qdii-note">图片列出全部监测份额，并区分“已核验”和“待核验”；限制申购按已核验直销额度从高到低排列，待核验置后。不使用天天基金等代销平台额度。“A/C合计”或“A/C/I合计”表示共享额度，不能按份额类别重复计算。待核验记录不视为已确认额度；个人账户实际可下单额度以基金管理人直销渠道当日页面为准；数据不构成投资建议。</p>
+<p class="qdii-note">图片列出全部监测份额，并按已核验直销额度从高到低排列；无可用数字额度、暂停申购和待核验记录置后。不使用天天基金等代销平台额度。“A/C合计”或“A/C/I合计”表示共享额度，不能按份额类别重复计算。待核验记录不视为已确认额度；个人账户实际可下单额度以基金管理人直销渠道当日页面为准；数据不构成投资建议。</p>
 {actions}
 </main>
 <script>
@@ -840,7 +880,7 @@ def build_public_page(snapshot: dict[str, Any], *, public_url: str = "", card: b
 
 
 def build_share_card(snapshot: dict[str, Any]) -> str:
-    return build_public_page(snapshot, card=True)
+    return build_public_page(snapshot, card=True, sort_mode="quota")
 
 
 def append_history(snapshot: dict[str, Any]) -> None:
@@ -913,7 +953,7 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
             return 1
         REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
         REPORT_PATH.write_text(build_report(snapshot), encoding="utf-8")
-        PUBLIC_REPORT_PATH.write_text(build_public_page(snapshot, public_url=public_url), encoding="utf-8")
+        PUBLIC_REPORT_PATH.write_text(build_public_page(snapshot, public_url=public_url, sort_mode="quota"), encoding="utf-8")
         SHARE_CARD_PATH.write_text(build_share_card(snapshot), encoding="utf-8")
         print(f"[SHARE] 公开快照：{PUBLIC_REPORT_PATH}")
         print(f"[SHARE] 分享卡片：{SHARE_CARD_PATH}")
@@ -934,7 +974,7 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
         append_history(snapshot)
         REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
         REPORT_PATH.write_text(build_report(snapshot), encoding="utf-8")
-        PUBLIC_REPORT_PATH.write_text(build_public_page(snapshot, public_url=public_url), encoding="utf-8")
+        PUBLIC_REPORT_PATH.write_text(build_public_page(snapshot, public_url=public_url, sort_mode="quota"), encoding="utf-8")
         SHARE_CARD_PATH.write_text(build_share_card(snapshot), encoding="utf-8")
         print("[BASELINE] 已写入当前真实状态，不发送通知。")
         return 1 if snapshot["errors"] else 0
@@ -995,7 +1035,7 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
     append_history(snapshot)
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(build_report(snapshot), encoding="utf-8")
-    PUBLIC_REPORT_PATH.write_text(build_public_page(snapshot, public_url=public_url), encoding="utf-8")
+    PUBLIC_REPORT_PATH.write_text(build_public_page(snapshot, public_url=public_url, sort_mode="quota"), encoding="utf-8")
     SHARE_CARD_PATH.write_text(build_share_card(snapshot), encoding="utf-8")
     return 1 if snapshot["errors"] or not notification.get("ok") else 0
 

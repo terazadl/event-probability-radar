@@ -136,6 +136,7 @@ class QDIIRadarTests(unittest.TestCase):
         self.assertIn("纳指100 QDII", title)
         self.assertIn("正常开放：1", body)
         self.assertIn("限制申购：1", body)
+        self.assertIn("全量额度排行", body)
         self.assertIn("只采用基金管理人直销平台或基金管理人公告", body)
         self.assertIn("不使用天天基金等代销平台额度", body)
         self.assertNotIn("| 测试基金", body)
@@ -207,6 +208,17 @@ class QDIIRadarTests(unittest.TestCase):
         self.assertEqual([row["code"] for row in snapshot["records"]], ["HIGH", "LOW"])
         page = qdii_radar.build_public_page(snapshot)
         self.assertLess(page.index("测试基金 HIGH"), page.index("测试基金 LOW"))
+
+    def test_share_card_uses_full_quota_ranking_and_puts_unavailable_rows_last(self) -> None:
+        high = fund("HIGH", qdii_radar.STATUS_LIMITED, purchase_limit_rmb=50000)
+        low = fund("LOW", qdii_radar.STATUS_LIMITED, purchase_limit_rmb=10)
+        suspended = fund("STOP", qdii_radar.STATUS_SUSPENDED)
+        card = qdii_radar.build_share_card(
+            qdii_radar.build_snapshot([low, suspended, high], {"funds": {}}, NOW)
+        )
+        self.assertIn("额度排序（高→低）", card)
+        self.assertLess(card.index("测试基金 HIGH"), card.index("测试基金 LOW"))
+        self.assertLess(card.index("测试基金 LOW"), card.index("测试基金 STOP"))
 
     def test_source_review_flags_rejects_non_https_live_source(self) -> None:
         row = fund(

@@ -222,9 +222,10 @@ image/report carries the full monitoring universe. A displayed open state does
 not guarantee that a particular account can place an order,
 and “未披露” is not the same as “unlimited”.
 
-Within each status section, limited-subscription rows are sorted by verified direct-sales
-quota from high to low; pending-review rows are placed last. Status remains the primary
-grouping, because a larger quota does not make a suspended fund investable.
+The daily public page and attached share card use a full-universe quota ranking: verified
+direct-sales quotas are shown from high to low, while undisclosed, suspended, and
+pending-review rows are placed after the usable numeric quotas. The internal Markdown
+report still keeps the status-grouped table for auditability.
 
 The monitoring scope is intentionally `onshore_otc_rmb`: the secondary reference page
 may list additional on-exchange shares and agency-only rows.  It is used for discovery
