@@ -23,8 +23,9 @@ import os
 import re
 import subprocess
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SYSTEM_DIR = SCRIPT_DIR.parent
@@ -32,6 +33,8 @@ SECRETS_PATH = SCRIPT_DIR / ".secrets.json"
 STATE_PATH = SYSTEM_DIR / "Data" / "notify_state.json"
 
 CURL_TIMEOUT = "20"
+CURL_RETRIES = "2"
+DEFAULT_TIMEZONE_NAME = "Asia/Shanghai"
 
 
 # ---------------------------------------------------------------- 配置
@@ -84,15 +87,22 @@ def _fingerprint(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
-def already_sent_today(text: str) -> bool:
+def _today(timezone_name: str = DEFAULT_TIMEZONE_NAME) -> str:
+    try:
+        return datetime.now(ZoneInfo(timezone_name)).date().isoformat()
+    except (KeyError, ValueError):
+        return date.today().isoformat()
+
+
+def already_sent_today(text: str, *, timezone_name: str = DEFAULT_TIMEZONE_NAME) -> bool:
     state = _load_state()
-    if state.get("date") != date.today().isoformat():
+    if state.get("date") != _today(timezone_name):
         return False
     return _fingerprint(text) in set(state.get("sent", []))
 
 
-def mark_sent(text: str) -> None:
-    today = date.today().isoformat()
+def mark_sent(text: str, *, timezone_name: str = DEFAULT_TIMEZONE_NAME) -> None:
+    today = _today(timezone_name)
     state = _load_state()
     if state.get("date") != today:
         state = {"date": today, "sent": []}
@@ -104,14 +114,21 @@ def mark_sent(text: str) -> None:
 
 # ---------------------------------------------------------------- 推送
 
-def push(title: str, desp: str = "", *, dry_run: bool = False, dedupe: bool = True) -> dict:
+def push(
+    title: str,
+    desp: str = "",
+    *,
+    dry_run: bool = False,
+    dedupe: bool = True,
+    timezone_name: str = DEFAULT_TIMEZONE_NAME,
+) -> dict:
     """推一条消息。返回 {"ok": bool, "reason": str}。
 
     预期的运行时失败会转成结构化结果，不让通知服务拖垮数据流程。
     """
     key_text = f"{title}\n{desp}"
 
-    if dedupe and already_sent_today(key_text):
+    if dedupe and already_sent_today(key_text, timezone_name=timezone_name):
         return {"ok": True, "reason": "skipped: 今天已推送过相同内容"}
 
     if dry_run:
@@ -129,6 +146,7 @@ def push(title: str, desp: str = "", *, dry_run: bool = False, dedupe: bool = Tr
 
     cmd = [
         "curl", "-sS", "-L", "--ipv4", "--max-time", CURL_TIMEOUT,
+        "--retry", CURL_RETRIES, "--retry-delay", "1",
         "-X", "POST", build_endpoint(sendkey),
         "--data-urlencode", f"title={title}",
         "--data-urlencode", f"desp={desp}",
@@ -139,7 +157,7 @@ def push(title: str, desp: str = "", *, dry_run: bool = False, dedupe: bool = Tr
             capture_output=True,
             text=True,
             check=True,
-            timeout=int(CURL_TIMEOUT) + 5,
+            timeout=int(CURL_TIMEOUT) * (int(CURL_RETRIES) + 1) + 5,
         )
     except FileNotFoundError:
         return {"ok": False, "reason": "找不到 curl"}
@@ -157,7 +175,7 @@ def push(title: str, desp: str = "", *, dry_run: bool = False, dedupe: bool = Tr
 
     if payload.get("code") == 0:
         if dedupe:
-            mark_sent(key_text)
+            mark_sent(key_text, timezone_name=timezone_name)
         return {"ok": True, "reason": "sent"}
 
     return {"ok": False, "reason": f"Server酱返回: {result.stdout[:200]}"}

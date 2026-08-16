@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "description": "QDII 官方来源目录。只用于发现候选公告，不自动覆盖额度；候选记录仍需解析代码、份额、生效日和额度后才能写入日报。",
+  "managers": {
+    "建信基金": {
+      "domains": ["ccbfund.cn"],
+      "index_urls": ["https://www.ccbfund.cn/"]
+    },
+    "天弘基金": {
+      "domains": ["thfund.com.cn"],
+      "index_urls": ["https://www.thfund.com.cn/", "https://yuebao.thfund.com.cn/notice/"]
+    },
+    "摩根基金": {
+      "domains": ["jpmorgan.com", "cifm.com"],
+      "index_urls": ["https://am.jpmorgan.com/cn/zh", "https://www.cifm.com/fund/019172/index.html"]
+    },
+    "万家基金": {
+      "domains": ["wjasset.com"],
+      "index_urls": [
+        "https://www.wjasset.com/news/info/index.html",
+        "https://www.wjasset.com/news/info/index15.html",
+        "https://www.wjasset.com/news/info/index20.html",
+        "https://www.wjasset.com/news/info/index22.html"
+      ],
+      "page_patterns": [
+        {
+          "template": "https://www.wjasset.com/news/info/index{page}.html",
+          "start": 1,
+          "end": 30
+        }
+      ]
+    },
+    "华泰柏瑞基金": {
+      "domains": ["huatai-pb.com"],
+      "index_urls": ["https://www.huatai-pb.com/"]
+    },
+    "宝盈基金": {
+      "domains": ["byfunds.com"],
+      "index_urls": ["https://www.byfunds.com/"]
+    },
+    "汇添富基金": {
+      "domains": ["99fund.com"],
+      "index_urls": [
+        "https://www.99fund.com/main/products/pofund/018966/fundgg.shtml",
+        "https://www.99fund.com/main/products/pofund/018967/fundgg.shtml",
+        "https://www.99fund.com/main/products/pofund/021773/fundgg.shtml"
+      ]
+    },
+    "广发基金": {
+      "domains": ["gffunds.com.cn"],
+      "index_urls": [
+        "https://www.gffunds.com.cn/jjgg/zdsj/",
+        "https://www.gffunds.com.cn/jjgg/zdsj/index_1.shtml",
+        "https://www.gffunds.com.cn/jjgg/zdsj/index_3.shtml",
+        "https://www.gffunds.com.cn/jjgg/zdsj/index_5.shtml",
+        "https://www.gffunds.com.cn/jjgg/zdsj/index_9.shtml",
+        "https://www.gffunds.com.cn/jjgg/?v=2.0"
+      ]
+    },
+    "南方基金": {
+      "domains": ["nffund.com", "southernfund.com"],
+      "index_urls": [
+        "https://www.nffund.com/main/nfgg/qtgg/index.shtml",
+        "https://www.nffund.com/main/nfgg/qtgg/index_1.shtml",
+        "https://www.nffund.com/main/ydt/zhlc/cpgg/index.shtml"
+      ],
+      "page_patterns": [
+        {
+          "template": "https://www.nffund.com/main/nfgg/qtgg/index_{page}.shtml",
+          "start": 2,
+          "end": 15
+        }
+      ]
+    },
+    "博时基金": {
+      "domains": ["bosera.com"],
+      "index_urls": ["https://www.bosera.com/"]
+    },
+    "国泰基金": {
+      "domains": ["gtfund.com"],
+      "index_urls": ["https://www.gtfund.com/"]
+    }
+  }
+}

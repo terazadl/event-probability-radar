@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "universe_scope": "onshore_otc_rmb",
+  "universe_description": "人民币场外纳斯达克100 QDII；直销渠道观察，不含场内份额",
+  "secondary_reference_url": "https://anxinletech.com/instrument-qdii.html",
+  "enforce_review_gate": true,
+  "universe_csv": "Config/qdii_universe_template.csv",
+  "daily_digest": {
+    "enabled": true,
+    "timezone": "Asia/Shanghai",
+    "hour": 8,
+    "minute": 0,
+    "send_window_minutes": 60
+  },
+  "public_share_enabled": true,
+  "public_share_url": "https://github.com/terazadl/event-probability-radar/releases/tag/qdii-latest",
+  "public_image_url": "https://github.com/terazadl/event-probability-radar/releases/download/qdii-latest/nasdaq100-qdii-radar.png",
+  "funds": []
+}
