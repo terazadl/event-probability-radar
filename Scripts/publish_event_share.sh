@@ -6,9 +6,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SYSTEM_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BLOG_DIR="${TERA_EVENT_BLOG_DIR:-}"
-BLOG_REPO_URL="${TERA_EVENT_BLOG_REPO_URL:-}"
+DEFAULT_REPO="https://github.com/terazadl/terazadl.github.io.git"
+PAGES_REPO="${TERA_EVENT_PAGES_REPO:-$DEFAULT_REPO}"
+BLOG_SOURCE_REPO="${TERA_EVENT_BLOG_REPO_URL:-$PAGES_REPO}"
+BLOG_SOURCE_BRANCH="${TERA_EVENT_BLOG_SOURCE_BRANCH:-hexo-src}"
 BLOG_PAGES_BRANCH="${TERA_EVENT_BLOG_PAGES_BRANCH:-master}"
-PAGES_REPO="${TERA_EVENT_PAGES_REPO:-$BLOG_REPO_URL}"
 PUBLIC_HTML="$SYSTEM_DIR/Reports/事件概率雷达·公开快照.html"
 CARD_HTML="$SYSTEM_DIR/Reports/事件概率雷达·分享卡片.html"
 CARD_PNG="$SYSTEM_DIR/Reports/事件概率雷达·分享卡片.png"
@@ -23,20 +25,13 @@ elif [[ -n "$USER_HOME" && -d "$USER_HOME/.local/bin" ]]; then
   export PATH="$USER_HOME/.local/bin:$PATH"
 fi
 NPM="$(command -v npm || true)"
+GIT="$(command -v git || true)"
 
 if [[ ! -s "$PUBLIC_HTML" || ! -s "$CARD_HTML" ]]; then
   echo "缺少当前日报页面或分享卡片，请先生成 Reports 文件。" >&2
   exit 2
 fi
-if [[ -z "$BLOG_DIR" ]]; then
-  echo "请设置 TERA_EVENT_BLOG_DIR 指向 Hexo 博客目录。" >&2
-  exit 2
-fi
-if [[ -z "$BLOG_REPO_URL" ]]; then
-  echo "请设置 TERA_EVENT_BLOG_REPO_URL，避免误推送到错误仓库。" >&2
-  exit 2
-fi
-if [[ ! -d "$BLOG_DIR/source" ]]; then
+if [[ -n "$BLOG_DIR" && ! -d "$BLOG_DIR/source" ]]; then
   echo "不是可用的 Hexo 博客目录：$BLOG_DIR" >&2
   exit 2
 fi
@@ -46,6 +41,10 @@ if [[ ! -x "$CHROME" ]]; then
 fi
 if [[ -z "$NPM" ]]; then
   echo "找不到 npm，无法构建公开页面。" >&2
+  exit 127
+fi
+if [[ -z "$GIT" ]]; then
+  echo "找不到 git，无法克隆 Hexo 源码或 GitHub Pages 仓库。" >&2
   exit 127
 fi
 if [[ -z "$IMAGE_URL" ]]; then
@@ -91,11 +90,28 @@ if [[ ! -s "$temp_card_png" ]]; then
 fi
 cp "$temp_card_png" "$CARD_PNG"
 
-# launchd 可能没有 macOS Desktop 的自动化写入权限。复制到临时构建目录，
-# 避免把日报发布绑定到直接改写 Desktop 下的 Hexo source/public。
-mkdir -p "$build_dir"
-rsync -a --exclude='.git' --exclude='.deploy_git' --exclude='public' \
-  "$BLOG_DIR/" "$build_dir/"
+# launchd 默认不读取 Desktop，而是从 GitHub 的 Hexo 源码分支递归克隆到临时目录。
+# 这样构建过程不依赖 macOS TCC 对 Desktop 的授权，也不会遗漏主题子模块。
+if [[ -n "$BLOG_DIR" ]]; then
+  mkdir -p "$build_dir"
+  rsync -a --exclude='.git' --exclude='.deploy_git' --exclude='public' \
+    "$BLOG_DIR/" "$build_dir/"
+else
+  echo "[SHARE] 从 ${BLOG_SOURCE_REPO} 的 ${BLOG_SOURCE_BRANCH} 分支克隆 Hexo 源码。"
+  "$GIT" clone --quiet --recurse-submodules --branch "$BLOG_SOURCE_BRANCH" \
+    --single-branch "$BLOG_SOURCE_REPO" "$build_dir"
+fi
+if [[ ! -s "$build_dir/package.json" || ! -s "$build_dir/_config.yml" ]]; then
+  echo "克隆的目录不是完整的 Hexo 源码：$BLOG_SOURCE_REPO#$BLOG_SOURCE_BRANCH" >&2
+  exit 2
+fi
+if [[ ! -x "$build_dir/node_modules/.bin/hexo" ]]; then
+  echo "[SHARE] 临时目录缺少 Hexo 依赖，执行 npm ci。"
+  if ! (cd "$build_dir" && "$NPM" ci --no-audit --no-fund --ignore-scripts); then
+    echo "Hexo 依赖安装失败，未发送日报。" >&2
+    exit 1
+  fi
+fi
 mkdir -p "$build_dir/source/event-radar" "$build_dir/source/images"
 cp "$PUBLIC_HTML" "$build_dir/source/event-radar/index.html"
 cp "$CARD_PNG" "$build_dir/source/images/event-radar-latest.png"
@@ -109,26 +125,17 @@ if [[ ! -s "$build_dir/public/event-radar/index.html" || ! -s "$build_dir/public
   exit 1
 fi
 
-if ! git -C "$BLOG_DIR" remote get-url origin >/dev/null 2>&1; then
-  git -C "$BLOG_DIR" remote add origin "$BLOG_REPO_URL"
-else
-  blog_origin="$(git -C "$BLOG_DIR" remote get-url origin)"
-  if [[ "$blog_origin" != "$BLOG_REPO_URL" ]]; then
-    echo "博客 origin 与 TERA_EVENT_BLOG_REPO_URL 不一致：$blog_origin" >&2
-    exit 2
-  fi
-fi
-git clone --quiet --branch "$BLOG_PAGES_BRANCH" --single-branch "$PAGES_REPO" "$pages_dir"
+"$GIT" clone --quiet --branch "$BLOG_PAGES_BRANCH" --single-branch "$PAGES_REPO" "$pages_dir"
 mkdir -p "$pages_dir/event-radar" "$pages_dir/images"
 cp "$build_dir/public/event-radar/index.html" "$pages_dir/event-radar/index.html"
 cp "$build_dir/public/images/event-radar-latest.png" "$pages_dir/images/event-radar-latest.png"
 
-git -C "$pages_dir" add event-radar/index.html images/event-radar-latest.png
-if git -C "$pages_dir" diff --cached --quiet; then
+"$GIT" -C "$pages_dir" add event-radar/index.html images/event-radar-latest.png
+if "$GIT" -C "$pages_dir" diff --cached --quiet; then
   echo "[SHARE] 公开文件没有变化，继续校验现有图片。"
 else
-  git -C "$pages_dir" commit -m "Refresh event radar daily snapshot"
-  git -C "$pages_dir" push origin "HEAD:$BLOG_PAGES_BRANCH"
+  "$GIT" -C "$pages_dir" commit -m "Refresh event radar daily snapshot"
+  "$GIT" -C "$pages_dir" push origin "HEAD:$BLOG_PAGES_BRANCH"
 fi
 
 separator='?'
