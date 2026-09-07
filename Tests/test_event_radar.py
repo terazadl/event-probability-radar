@@ -615,6 +615,75 @@ class EventRadarTests(unittest.TestCase):
         self.assertFalse(state_path.exists())
         push.assert_not_called()
 
+    def test_closed_market_shows_ended_status_and_correct_leader(self) -> None:
+        """测试已闭盘/已结算事件，主结果文案为结束时结果且与最高项完全一致。"""
+        config = distribution_event()
+        # 模拟市场已闭盘：平局/不变为 100% (1.0)，其余为 0%
+        markets = {
+            "1": market("1", 0.0, 0.0, open_market=False),
+            "2": market("2", 0.0, 0.0, open_market=False),
+            "3": market("3", 1.0, 1.0, open_market=False),  # 维持不变
+            "4": market("4", 0.0, 0.0, open_market=False),
+            "5": market("5", 0.0, 0.0, open_market=False),
+        }
+        snapshot = event_radar.build_snapshot(config, markets, NOW)
+        self.assertFalse(snapshot["open"])
+        self.assertIn("main_result", snapshot)
+        self.assertEqual(snapshot["main_result"]["label_zh"], "维持利率不变")
+        self.assertEqual(snapshot["main_result"]["display_probability_pct"], 100.0)
+        self.assertEqual(snapshot["main_result"]["status_label"], "结束时结果")
+
+        # 验证生成的 HTML 卡片包含结束时结果标识与正确的最高项
+        html_card = event_radar.public_event_html(snapshot)
+        self.assertIn("结束时结果", html_card)
+        self.assertIn("维持利率不变", html_card)
+        self.assertIn("100.0%", html_card)
+        self.assertNotIn("当前最可能", html_card)
+
+    def test_share_summary_text_uses_dynamic_event_names(self) -> None:
+        """测试分享摘要使用动态事件名，而不是写死的美联储/霍尔木兹。"""
+        config = event([{"market_id": "1", "outcome": "Yes", "label": "测试选项"}])
+        config["notification_title_zh"] = "中东局势测试"
+        config["customer_question_zh"] = "局势是否缓解"
+        snapshot = event_radar.build_snapshot(config, {"1": market("1", 0.45, 0.45)}, NOW)
+        summary = event_radar.share_summary_text([snapshot], NOW)
+        self.assertIn("中东局势测试", summary)
+        self.assertIn("局势是否缓解", summary)
+        self.assertNotIn("霍尔木兹：", summary)
+        self.assertNotIn("美联储9月：", summary)
+
+    def test_share_card_dimensions_and_themes(self) -> None:
+        """测试分享卡片支持 1080x1440 规格，支持浅色和深色主题，并带有品牌胶囊。"""
+        config = distribution_event()
+        snapshot = event_radar.build_snapshot(
+            config,
+            {
+                "1": market("1", 0.1, 0.1),
+                "2": market("2", 0.2, 0.2),
+                "3": market("3", 0.7, 0.7),
+                "4": market("4", 0.0, 0.0),
+                "5": market("5", 0.0, 0.0),
+            },
+            NOW,
+        )
+        # 默认浅色
+        card_light = event_radar.build_share_card([snapshot], NOW, theme="light")
+        self.assertIn("1080px", card_light)
+        self.assertIn("1440px", card_light)
+        self.assertIn("大事件共识", card_light)
+        self.assertIn("radar-theme-light", card_light)
+
+        # 深色
+        card_dark = event_radar.build_share_card([snapshot], NOW, theme="dark")
+        self.assertIn("radar-theme-dark", card_dark)
+
+    def test_trigger_text_clarity(self) -> None:
+        """测试停盘与术语提示更通俗直白。"""
+        self.assertEqual(
+            event_radar.trigger_text({"kind": "market_closed"}),
+            "底层市场已停盘，等待官方最终判定结果",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

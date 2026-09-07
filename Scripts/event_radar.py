@@ -43,6 +43,14 @@ STATE_VERSION = 2
 PRODUCT_NAME_ZH = "Polymarket观测站"
 CUSTOMER_TIMEZONE_NAME = "Asia/Shanghai"
 CUSTOMER_TIMEZONE_LABEL = "北京时间"
+CHINESE_COUNT_WORDS = {
+    1: "一个", 2: "两个", 3: "三个", 4: "四个", 5: "五个",
+    6: "六个", 7: "七个", 8: "八个", 9: "九个", 10: "十个",
+}
+
+
+def chinese_outcome_count(n: int) -> str:
+    return CHINESE_COUNT_WORDS.get(n, f"{n}个")
 
 
 def utc_now() -> datetime:
@@ -237,7 +245,9 @@ def build_snapshot(event: dict, markets: dict[str, dict], now: datetime) -> dict
         ]
         spread = max(row["spread_pp"] for row in distribution) / 100
         leader = max(distribution, key=lambda row: row["probability"])
-        outcome_leader = max(outcomes, key=lambda row: row["probability"])
+        outcome_leader = max(
+            outcomes, key=lambda row: (row["display_probability_pct"], row["probability"])
+        )
     elif mode == "scalar":
         components = [
             component_quote(component, markets[str(component["market_id"])])
@@ -270,6 +280,27 @@ def build_snapshot(event: dict, markets: dict[str, dict], now: datetime) -> dict
 
     rules_text = "\n".join(row["description"] for row in components)
     rules_hash = hashlib.sha256(rules_text.encode("utf-8")).hexdigest()[:16]
+
+    # 统一提取主结果，供海报、通知、前端一致消费，禁止各处私自再算
+    if mode == "distribution":
+        status_label = "当前最可能" if is_open else "结束时结果"
+        main_result = {
+            "status_label": status_label,
+            "label_zh": outcome_leader["label_zh"],
+            "probability": outcome_leader["probability"],
+            "display_probability_pct": outcome_leader["display_probability_pct"],
+            "is_open": is_open,
+        }
+    else:
+        status_label = "市场概率" if is_open else "结束时结果"
+        main_result = {
+            "status_label": status_label,
+            "label_zh": event.get("customer_question_zh", event["label_zh"]),
+            "probability": probability,
+            "display_probability_pct": round(probability * 100, 1),
+            "is_open": is_open,
+        }
+
     snapshot = {
         "event_id": event["id"],
         "label_zh": event["label_zh"],
@@ -283,6 +314,7 @@ def build_snapshot(event: dict, markets: dict[str, dict], now: datetime) -> dict
         "quality_reasons": quality_reasons,
         "rules_hash": rules_hash,
         "components": components,
+        "main_result": main_result,
         "source_name": event["source_name"],
         "source_url": event["source_url"],
         "resolution_source_url": event["resolution_source_url"],
@@ -522,7 +554,7 @@ def trigger_text(trigger: dict) -> str:
     if kind == "rules_changed":
         return "底层市场裁决规则发生变化"
     if kind == "market_closed":
-        return "底层市场已停止接受订单，需检查是否裁决"
+        return "底层市场已停盘，等待官方最终判定结果"
     return kind
 
 
@@ -578,13 +610,14 @@ def customer_timestamp(timestamp: str) -> str:
 
 def notification_headline(snapshot: dict) -> str:
     subject = snapshot["notification_title_zh"]
+    main = snapshot["main_result"]
+    ended_tag = " [已停盘/结束]" if not snapshot["open"] else ""
     if snapshot["mode"] == "distribution":
-        leader = snapshot["outcome_leader"]
         return (
-            f"{subject}：{leader['label_zh']} "
-            f"{leader['display_probability_pct']:.1f}%"
+            f"{subject}：{main['label_zh']} "
+            f"{main['display_probability_pct']:.1f}%{ended_tag}"
         )
-    return f"{subject}：{snapshot['probability_pct']:.1f}%"
+    return f"{subject}：{main['display_probability_pct']:.1f}%{ended_tag}"
 
 
 def build_notification(
@@ -614,10 +647,12 @@ def build_notification(
                 f"  - {row['label_zh']}：**{row['display_probability_pct']:.1f}%**"
                 for row in snapshot["outcomes"]
             )
+            status_text = "当前最可能" if snapshot["open"] else "结束时结果"
+            count_label = f"{chinese_outcome_count(len(snapshot['outcomes']))}互斥结果（合计100%）"
             probability_line = (
-                f"- 当前最可能：**{snapshot['outcome_leader']['label_zh']} "
+                f"- {status_text}：**{snapshot['outcome_leader']['label_zh']} "
                 f"{snapshot['outcome_leader']['display_probability_pct']:.1f}%**\n"
-                f"- 五个互斥结果（合计100%）：\n{outcome_lines}\n"
+                f"- {count_label}：\n{outcome_lines}\n"
             )
         else:
             delta_1h = current_delta(samples, 1)
@@ -626,8 +661,9 @@ def build_notification(
                 changes.append(f"1小时 {delta_1h:+.1f}pp")
             if delta_24h is not None:
                 changes.append(f"24小时 {delta_24h:+.1f}pp")
+            ended_note = "（已结束）" if not snapshot["open"] else ""
             probability_line = (
-                f"- {snapshot['customer_question_zh']}："
+                f"- {snapshot['customer_question_zh']}{ended_note}："
                 f"**{snapshot['probability_pct']:.1f}%**\n"
             )
         change_text = "；".join(changes) if changes else "历史尚不足以计算窗口变化"
@@ -648,13 +684,13 @@ def build_notification(
             f"- 判定指标：[{snapshot['resolution_source_name']}]"
             f"({snapshot['resolution_source_url']}) · {snapshot['resolution_metric_zh']}\n"
             f"- 判定规则：{snapshot['resolution_rule_zh']}\n"
-            f"- 数据时间：{customer_timestamp(snapshot['timestamp'])}"
-            f"{share_line}{source_explainer}"
+            f"- 数据时间：{customer_timestamp(snapshot['timestamp'])}{share_line}{source_explainer}"
         )
     sections.append(
         "---\n\n市场概率会变化，仅反映Polymarket参与者当时的预期；"
         "不是事实概率，也不构成交易建议。\n\n"
-        "本产品为非官方观测工具，与Polymarket无隶属或合作关系。"
+        "本产品为非官方只读观测工具，不连接钱包，无交易/下注功能，与Polymarket无隶属或合作关系。\n\n"
+        "> 提示：pp = 百分点（如从 40% 变到 45% 为 +5pp）。"
     )
     return title, "\n\n".join(sections)
 
@@ -737,14 +773,17 @@ def build_daily_digest(
                 f"  - {row['label_zh']}：**{row['display_probability_pct']:.1f}%**"
                 for row in snapshot["outcomes"]
             )
+            status_text = "当前最可能" if snapshot["open"] else "结束时结果"
+            count_label = f"{chinese_outcome_count(len(snapshot['outcomes']))}互斥结果（合计100%）"
             probability_text = (
-                f"- 当前最可能：**{snapshot['outcome_leader']['label_zh']} "
+                f"- {status_text}：**{snapshot['outcome_leader']['label_zh']} "
                 f"{snapshot['outcome_leader']['display_probability_pct']:.1f}%**\n"
-                f"- 五个互斥结果（合计100%）：\n{outcome_lines}"
+                f"- {count_label}：\n{outcome_lines}"
             )
         else:
+            ended_note = "（已结束）" if not snapshot["open"] else ""
             probability_text = (
-                f"- {snapshot['customer_question_zh']}："
+                f"- {snapshot['customer_question_zh']}{ended_note}："
                 f"**{snapshot['probability_pct']:.1f}%**"
             )
         sections.append(
@@ -783,24 +822,27 @@ def share_summary_text(snapshots: list[dict], checked_at: datetime) -> str:
         "今日读数："
     ]
     for snapshot in snapshots:
+        title = snapshot.get("notification_title_zh") or snapshot["label_zh"]
+        main = snapshot["main_result"]
         if snapshot["mode"] == "distribution":
-            leader = snapshot["outcome_leader"]
             outcomes = "；".join(
                 f"{row['label_zh']} {row['display_probability_pct']:.1f}%"
                 for row in snapshot["outcomes"]
             )
+            count = len(snapshot["outcomes"])
             lines.append(
-                f"美联储9月：{leader['label_zh']} {leader['display_probability_pct']:.1f}%"
+                f"{title}：{main['label_zh']} {main['display_probability_pct']:.1f}%"
             )
-            lines.append(f"五个互斥结果：{outcomes}")
+            lines.append(f"{chinese_outcome_count(count)}互斥结果：{outcomes}")
         else:
             lines.append(
-                f"霍尔木兹：{snapshot['customer_question_zh']} "
+                f"{title}：{snapshot['customer_question_zh']} "
                 f"{snapshot['probability_pct']:.1f}%"
             )
     lines.extend([
         "概率来自Polymarket；最终结果按各事件的独立判定指标确认。",
         "仅反映市场当时预期，不构成交易建议。",
+        "注：本产品为只读观测工具，不连接钱包、不提供交易下注功能。",
         "非Polymarket官方产品。",
     ])
     return "\n".join(lines)
@@ -815,8 +857,10 @@ def public_event_html(snapshot: dict) -> str:
     metric = html.escape(snapshot["resolution_metric_zh"])
     rule = html.escape(snapshot["resolution_rule_zh"])
     explainer = html.escape(snapshot.get("source_explainer_zh", ""))
+    main = snapshot["main_result"]
+    ended_badge = " radar-ended" if not snapshot["open"] else ""
+
     if snapshot["mode"] == "distribution":
-        leader = snapshot["outcome_leader"]
         rows = "".join(
             "<li>"
             f"<span>{html.escape(row['label_zh'])}</span>"
@@ -826,19 +870,21 @@ def public_event_html(snapshot: dict) -> str:
             "</li>"
             for row in snapshot["outcomes"]
         )
+        count_label = f"{chinese_outcome_count(len(snapshot['outcomes']))}互斥结果，合计100%"
         headline = (
-            "<p class=\"radar-question\">当前最可能</p>"
-            f"<p class=\"radar-leader\">{html.escape(leader['label_zh'])}</p>"
-            f"<p class=\"radar-number\">{leader['display_probability_pct']:.1f}%</p>"
-            f"<ol class=\"radar-outcomes\" aria-label=\"五个互斥结果，合计100%\">{rows}</ol>"
+            f"<p class=\"radar-question{ended_badge}\">{html.escape(main['status_label'])}</p>"
+            f"<p class=\"radar-leader\">{html.escape(main['label_zh'])}</p>"
+            f"<p class=\"radar-number\">{main['display_probability_pct']:.1f}%</p>"
+            f"<ol class=\"radar-outcomes\" aria-label=\"{count_label}\">{rows}</ol>"
         )
     else:
         headline = (
-            f"<p class=\"radar-number\">{snapshot['probability_pct']:.1f}%</p>"
-            f"<p class=\"radar-question\">{html.escape(snapshot['customer_question_zh'])}</p>"
+            f"<p class=\"radar-number\">{main['display_probability_pct']:.1f}%</p>"
+            f"<p class=\"radar-question{ended_badge}\">{html.escape(main['label_zh'])}"
+            f"{'（已结束）' if not snapshot['open'] else ''}</p>"
         )
     return (
-        "<article class=\"radar-event\">"
+        f"<article class=\"radar-event{ended_badge}\">"
         f"<p class=\"radar-eyebrow\">{html.escape(snapshot['notification_title_zh'])}</p>"
         f"<h2>{label}</h2>{headline}"
         "<dl class=\"radar-method\">"
@@ -853,16 +899,17 @@ def public_event_html(snapshot: dict) -> str:
     )
 
 
-def public_styles(*, card: bool = False) -> str:
+def public_styles(*, card: bool = False, theme: str = "light") -> str:
+    # 尺寸对齐美编 1080x1440 (3:4) 比例
     canvas = (
-        "body{margin:0;width:1080px;height:1350px;overflow:hidden;}"
-        ".radar-shell{min-height:1350px;padding:58px 70px 42px;}"
+        "body{margin:0;width:1080px;height:1440px;overflow:hidden;}"
+        ".radar-shell{min-height:1440px;padding:52px 64px 40px;}"
         ".radar-card .radar-head{margin-bottom:20px;}"
         ".radar-card .radar-grid{grid-template-columns:1fr;gap:18px;}"
         ".radar-card .radar-event{padding:21px 28px 19px;}"
         ".radar-card .radar-summary{font-size:15px;margin:-4px 0 18px;}"
         ".radar-card .radar-event h2{font-size:25px;margin-bottom:11px;}"
-        ".radar-card .radar-number{font-size:64px;}"
+        ".radar-card .radar-number{font-size:68px;}"
         ".radar-card .radar-question{margin-bottom:12px;}"
         ".radar-card .radar-outcomes{margin-top:11px;}"
         ".radar-card .radar-method{margin-top:13px;}"
@@ -873,41 +920,88 @@ def public_styles(*, card: bool = False) -> str:
         if card else
         ".event-radar-page-body .main-inner{max-width:1180px;width:calc(100% - 48px);}.radar-shell{padding:52px 0 78px;}"
     )
+    # 主题颜色体系：浅色默认（米白底，蓝条，黑色字），深色可选（海军底，深蓝条，黄字）
+    if card and theme == "dark":
+        theme_vars = """
+body.radar-card{background:#0c1427;color:#e6ebf5;}
+.radar-shell{color:#e6ebf5;}
+.radar-head{border-bottom-color:#2a3b5c;}
+.radar-head h1{color:#f5f7fc;}
+.radar-time{color:#8ea3c7;}
+.radar-time strong{color:#f5f7fc;}
+.radar-summary{background:#13203c;border-left-color:#3875f6;color:#a8bddf;}
+.radar-summary strong{color:#f5f7fc;}
+.radar-event{background:rgba(20,34,64,.65);border-color:#253759;border-top-color:#3875f6;}
+.radar-event h2{color:#f5f7fc;}
+.radar-number{color:#f6c343;}
+.radar-leader{color:#f5f7fc;}
+.radar-question{color:#8ea3c7;}
+.radar-question.radar-ended{color:#f6c343;font-weight:700;}
+.radar-outcomes{border-top-color:#253759;}
+.radar-outcomes li{color:#cfd9eb;}
+.radar-outcome-track{background:#1d2c4d;}
+.radar-outcome-track span{background:#3875f6;}
+.radar-method{border-top-color:#253759;}
+.radar-method>div{border-bottom-color:#1e2e4f;}
+.radar-method dt{color:#8ea3c7;}
+.radar-method dd{color:#cfd9eb;}
+.radar-method a{color:#4e8cff;}
+.radar-explainer{color:#8ea3c7;}
+.radar-foot{color:#768cb0;}
+.radar-brand-pill{background:#1d2e52;border:1px solid #3875f6;color:#8ab4f8;}
+"""
+    else:
+        theme_vars = """
+body.radar-card{background:#f7f5f0;color:#1d1c18;}
+.radar-shell{color:#1d1c18;}
+.radar-head{border-bottom-color:#1d1c18;}
+.radar-time{color:#706a60;}
+.radar-time strong{color:#1d1c18;}
+.radar-summary{border-left-color:#2f55d4;color:#45423b;}
+.radar-summary strong{color:#1d1c18;}
+.radar-event{background:rgba(255,255,255,.55);border-color:#a8a092;border-top-color:#2f55d4;}
+.radar-number{color:#1d1c18;}
+.radar-question.radar-ended{color:#c2410c;font-weight:700;}
+.radar-brand-pill{background:#e8edf8;border:1px solid #2f55d4;color:#2f55d4;}
+"""
     return f"""
 <style>
 {canvas}
-.radar-shell{{box-sizing:border-box;color:#1d1c18;font-family:"Lato","PingFang SC",sans-serif;}}
-.radar-head{{align-items:end;border-bottom:1px solid #1d1c18;display:flex;gap:28px;justify-content:space-between;margin-bottom:28px;padding-bottom:18px;}}
-.radar-kicker{{color:#2f55d4;font-size:12px;font-weight:900;letter-spacing:.15em;margin:0 0 9px;text-transform:uppercase;}}
+{theme_vars}
+.radar-shell{{box-sizing:border-box;font-family:"Lato","PingFang SC",sans-serif;}}
+.radar-head{{align-items:end;border-bottom:1px solid;display:flex;gap:28px;justify-content:space-between;margin-bottom:28px;padding-bottom:18px;}}
+.radar-kicker-row{{align-items:center;display:flex;gap:10px;margin-bottom:9px;}}
+.radar-brand-pill{{border-radius:999px;font-size:11px;font-weight:900;letter-spacing:.08em;padding:3px 9px;text-transform:uppercase;}}
+.radar-kicker{{color:#2f55d4;font-size:12px;font-weight:900;letter-spacing:.15em;margin:0;text-transform:uppercase;}}
 .radar-head h1{{font-family:"Libre Caslon Display","Noto Serif SC",serif;font-size:clamp(37px,5vw,58px);font-weight:400;letter-spacing:-.035em;line-height:1;margin:0;}}
-.radar-time{{color:#706a60;font-size:13px;line-height:1.45;margin:0;text-align:right;}}
-.radar-time strong{{color:#1d1c18;display:inline-block;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.1;}}
+.radar-time{{font-size:13px;line-height:1.45;margin:0;text-align:right;}}
+.radar-time strong{{display:inline-block;font-size:20px;font-weight:800;letter-spacing:.04em;line-height:1.1;}}
 .radar-time small{{font-size:12px;}}
-.radar-summary{{border-left:3px solid #2f55d4;color:#45423b;font-family:"Noto Serif SC",serif;font-size:16px;line-height:1.55;margin:0 0 24px;padding:10px 14px;}}
-.radar-summary strong{{color:#1d1c18;font-weight:700;}}
+.radar-summary{{border-left:3px solid;font-family:"Noto Serif SC",serif;font-size:16px;line-height:1.55;margin:0 0 24px;padding:10px 14px;}}
 .radar-grid{{display:grid;gap:22px;grid-template-columns:repeat(2,minmax(0,1fr));}}
-.radar-event{{background:rgba(255,255,255,.28);border:1px solid #a8a092;border-top:3px solid #2f55d4;padding:26px 28px 24px;}}
+.radar-event{{border:1px solid;border-top:3px solid;padding:26px 28px 24px;}}
 .radar-eyebrow{{color:#2f55d4;font-size:11px;font-weight:900;letter-spacing:.12em;margin:0 0 8px;text-transform:uppercase;}}
 .radar-event h2{{font-family:"Libre Caslon Text","Noto Serif SC",serif;font-size:23px;font-weight:600;line-height:1.3;margin:0 0 18px;}}
 .radar-number{{font-family:"Libre Caslon Display",Georgia,serif;font-size:68px;letter-spacing:-.05em;line-height:.95;margin:0 0 8px;}}
 .radar-leader{{font-family:"Noto Serif SC",serif;font-size:25px;font-weight:600;line-height:1.25;margin:0 0 4px;}}
-.radar-question{{color:#45423b;font-family:"Noto Serif SC",serif;font-size:15px;line-height:1.6;margin:0 0 22px;}}
-.radar-outcomes{{border-top:1px solid #c3bcaf;list-style:none;margin:18px 0 4px;padding:11px 0 0;}}
+.radar-question{{font-family:"Noto Serif SC",serif;font-size:15px;line-height:1.6;margin:0 0 22px;}}
+.radar-outcomes{{border-top:1px solid;list-style:none;margin:18px 0 4px;padding:11px 0 0;}}
 .radar-outcomes li{{align-items:center;display:grid;font-size:12px;gap:10px;grid-template-columns:minmax(130px,1.25fr) minmax(70px,.75fr) 45px;padding:5px 0;}}
 .radar-outcomes strong{{font-variant-numeric:tabular-nums;text-align:right;}}
-.radar-outcome-track{{background:#ded8cd;height:4px;overflow:hidden;}}
-.radar-outcome-track span{{background:#2f55d4;display:block;height:100%;}}
-.radar-method{{border-top:1px solid #a8a092;margin:22px 0 0;}}
-.radar-method>div{{border-bottom:1px solid #d2cbbf;display:grid;gap:15px;grid-template-columns:72px 1fr;padding:10px 0;}}
-.radar-method dt{{color:#706a60;font-size:11px;font-weight:900;letter-spacing:.06em;}}
+.radar-outcome-track{{height:4px;overflow:hidden;}}
+.radar-outcome-track span{{display:block;height:100%;}}
+.radar-method{{border-top:1px solid;margin:22px 0 0;}}
+.radar-method>div{{border-bottom:1px solid;display:grid;gap:15px;grid-template-columns:72px 1fr;padding:10px 0;}}
+.radar-method dt{{font-size:11px;font-weight:900;letter-spacing:.06em;}}
 .radar-method dd{{font-family:"Noto Serif SC",serif;font-size:12px;line-height:1.55;margin:0;}}
-.radar-method a{{border-bottom:1px solid currentColor;color:#2f55d4;text-decoration:none;}}
-.radar-explainer{{color:#45423b;font-family:"Noto Serif SC",serif;font-size:12px;line-height:1.65;margin:16px 0 0;}}
+.radar-method a{{border-bottom:1px solid currentColor;text-decoration:none;}}
+.radar-explainer{{font-family:"Noto Serif SC",serif;font-size:12px;line-height:1.65;margin:16px 0 0;}}
 .radar-actions{{align-items:center;border-top:1px solid #1d1c18;display:flex;flex-wrap:wrap;gap:12px;margin-top:28px;padding-top:20px;}}
 .radar-action{{background:#2f55d4;border:1px solid #2f55d4;color:#fff!important;cursor:pointer;font:800 12px "Lato",sans-serif;letter-spacing:.04em;padding:12px 17px;text-decoration:none;}}
 .radar-action--secondary{{background:transparent;color:#2f55d4!important;}}
 .radar-status{{color:#706a60;font-size:12px;}}
-.radar-foot{{color:#706a60;font-family:"Noto Serif SC",serif;font-size:12px;line-height:1.65;margin:17px 0 0;}}
+.radar-foot{{font-family:"Noto Serif SC",serif;font-size:12px;line-height:1.65;margin:17px 0 0;}}
+.radar-legend{{font-size:12px;line-height:1.5;margin-top:8px;opacity:.8;}}
 @media(max-width:760px){{.radar-head{{align-items:start;flex-direction:column;gap:12px;}}.radar-time{{text-align:left;}}.radar-grid{{grid-template-columns:1fr;}}.radar-event{{padding:23px 20px;}}.radar-number{{font-size:58px;}}.radar-outcomes li{{grid-template-columns:minmax(120px,1fr) 60px 42px;}}}}
 </style>"""
 
@@ -920,14 +1014,15 @@ def build_public_page(
     report_date = customer_report_date(checked_at)
     summary_bits = []
     for snapshot in snapshots:
+        title = snapshot.get("notification_title_zh") or snapshot["label_zh"]
+        main = snapshot["main_result"]
         if snapshot["mode"] == "distribution":
-            leader = snapshot["outcome_leader"]
             summary_bits.append(
-                f"美联储9月{leader['label_zh']} {leader['display_probability_pct']:.1f}%"
+                f"{title}{main['label_zh']} {main['display_probability_pct']:.1f}%"
             )
         else:
             summary_bits.append(
-                f"霍尔木兹未恢复 {snapshot['probability_pct']:.1f}%"
+                f"{title} {snapshot['probability_pct']:.1f}%"
             )
     summary = "｜".join(summary_bits)
     cards = "".join(public_event_html(snapshot) for snapshot in snapshots)
@@ -935,7 +1030,10 @@ def build_public_page(
     if public_url:
         summary_text += f"\n{public_url}"
     summary_json = json.dumps(summary_text, ensure_ascii=False)
-    title_json = json.dumps(f"{PRODUCT_NAME_ZH}｜霍尔木兹与美联储", ensure_ascii=False)
+    page_title_items = "与".join(
+        snapshot.get("notification_title_zh", snapshot["label_zh"]) for snapshot in snapshots
+    )
+    title_json = json.dumps(f"{PRODUCT_NAME_ZH}｜{page_title_items}", ensure_ascii=False)
     failure_note = ""
     if failures:
         failure_note = (
@@ -945,7 +1043,7 @@ def build_public_page(
     return f"""---
 layout: page
 title: Polymarket观测站
-description: 非官方的Polymarket事件概率观测页，跟踪霍尔木兹海峡风险与美联储利率决策。
+description: 非官方的Polymarket事件概率观测页，跟踪大事件市场概率分布与判定进展。
 header: false
 comments: false
 toc: false
@@ -956,7 +1054,14 @@ permalink: /event-radar/
 {public_styles()}
 <main class="radar-shell" aria-labelledby="radar-title">
   <header class="radar-head">
-    <div><p class="radar-kicker">Polymarket Observatory · Unofficial</p><h1 id="radar-title">Polymarket观测站</h1><p class="radar-summary"><strong>今日读数</strong>｜{html.escape(summary)}</p></div>
+    <div>
+      <div class="radar-kicker-row">
+        <span class="radar-brand-pill">大事件共识</span>
+        <p class="radar-kicker">Polymarket Observatory · Unofficial</p>
+      </div>
+      <h1 id="radar-title">Polymarket观测站</h1>
+      <p class="radar-summary"><strong>今日读数</strong>｜{html.escape(summary)}</p>
+    </div>
     <p class="radar-time"><strong>日报 {report_date}</strong><br><small>{html.escape(timestamp)}</small></p>
   </header>
   <div class="radar-grid">{cards}</div>
@@ -967,7 +1072,8 @@ permalink: /event-radar/
     <a class="radar-action radar-action--secondary" href="/images/event-radar-latest.png" download>下载朋友圈图片</a>
     <span class="radar-status" role="status" aria-live="polite"></span>
   </div>
-  <p class="radar-foot">概率来自Polymarket公开市场价格。Polymarket提供市场预期，IMF PortWatch或FOMC会后声明负责确认最终事实。市场概率会变化，不是客观预测，也不构成交易建议。本产品为非官方观测工具，与Polymarket无隶属或合作关系。</p>
+  <p class="radar-foot">概率来自Polymarket公开市场价格。Polymarket提供市场预期，独立数据源（如IMF PortWatch或FOMC会后声明）负责确认最终事实。市场概率会变化，不是客观预测，也不构成交易建议。本产品为非官方观测工具，不连接钱包，无交易/下注功能，与Polymarket无隶属或合作关系。</p>
+  <p class="radar-legend">注：pp = 百分点（percentage point），表示概率变动的绝对差值；如 40% 变动到 45% 为 +5pp。</p>
 </main>
 <script>
 (() => {{
@@ -990,39 +1096,50 @@ permalink: /event-radar/
 """
 
 
-def build_share_card(snapshots: list[dict], checked_at: datetime) -> str:
+def build_share_card(
+    snapshots: list[dict], checked_at: datetime, theme: str = "light"
+) -> str:
     timestamp = customer_timestamp(isoformat_utc(checked_at))
     report_date = customer_report_date(checked_at)
     summary_bits = []
     for snapshot in snapshots:
+        title = snapshot.get("notification_title_zh") or snapshot["label_zh"]
+        main = snapshot["main_result"]
         if snapshot["mode"] == "distribution":
-            leader = snapshot["outcome_leader"]
             summary_bits.append(
-                f"美联储9月{leader['label_zh']} {leader['display_probability_pct']:.1f}%"
+                f"{title}{main['label_zh']} {main['display_probability_pct']:.1f}%"
             )
         else:
             summary_bits.append(
-                f"霍尔木兹未恢复 {snapshot['probability_pct']:.1f}%"
+                f"{title} {snapshot['probability_pct']:.1f}%"
             )
     summary = "｜".join(summary_bits)
     cards = "".join(public_event_html(snapshot) for snapshot in snapshots)
+    theme_class = f"radar-theme-{theme}"
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=1080">
-<title>Polymarket观测站｜{report_date}</title>{public_styles(card=True)}</head>
-<body class="radar-card" style="background:#f5f1e8"><main class="radar-shell" aria-labelledby="radar-card-title">
+<title>Polymarket观测站｜{report_date}</title>{public_styles(card=True, theme=theme)}</head>
+<body class="radar-card {theme_class}"><main class="radar-shell" aria-labelledby="radar-card-title">
   <header class="radar-head">
-    <div><p class="radar-kicker">Polymarket Observatory · Unofficial</p><h1 id="radar-card-title">Polymarket观测站</h1><p class="radar-summary"><strong>今日读数</strong>｜{html.escape(summary)}</p></div>
+    <div>
+      <div class="radar-kicker-row">
+        <span class="radar-brand-pill">大事件共识</span>
+        <p class="radar-kicker">Polymarket Observatory · Unofficial</p>
+      </div>
+      <h1 id="radar-card-title">Polymarket观测站</h1>
+      <p class="radar-summary"><strong>今日读数</strong>｜{html.escape(summary)}</p>
+    </div>
     <p class="radar-time"><strong>日报 {report_date}</strong><br><small>{html.escape(timestamp)}</small></p>
   </header>
   <div class="radar-grid">{cards}</div>
-  <p class="radar-foot">数据来自Polymarket公开市场价格；最终结果按IMF PortWatch或FOMC会后声明确认。市场概率会变化，不是客观预测，也不构成交易建议。非Polymarket官方产品。</p>
+  <p class="radar-foot">数据来自Polymarket公开市场价格；最终结果按独立官方渠道确认。市场概率会变化，不是客观预测，也不构成交易建议。本产品为非官方只读观测工具，无下注或交易功能。</p>
 </main></body></html>
 """
 
 
 def write_report_artifacts(
     snapshots: list[dict], failures: list[dict], checked_at: datetime,
-    public_url: str,
+    public_url: str, theme: str = "light",
 ) -> None:
     """将本次抓取结果写入日报页面和分享卡片，供通知前发布使用。"""
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -1031,7 +1148,7 @@ def write_report_artifacts(
         encoding="utf-8",
     )
     SHARE_CARD_PATH.write_text(
-        build_share_card(snapshots, checked_at), encoding="utf-8"
+        build_share_card(snapshots, checked_at, theme=theme), encoding="utf-8"
     )
 
 
@@ -1106,6 +1223,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--export-share", action="store_true",
         help="刷新公开快照与朋友圈卡片，不通知、不改监控状态",
+    )
+    parser.add_argument(
+        "--theme", choices=["light", "dark"], default="light",
+        help="朋友圈卡片主题（默认 light 浅色，可选 dark 深色）",
     )
     parser.add_argument(
         "--daily-now", action="store_true",
@@ -1189,7 +1310,7 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
     )
     if args.export_share:
         write_report_artifacts(
-            snapshots, failures, current_time, public_page_url
+            snapshots, failures, current_time, public_page_url, theme=args.theme
         )
         print(f"[SHARE] 公开快照：{PUBLIC_REPORT_PATH}")
         print(f"[SHARE] 朋友圈卡片：{SHARE_CARD_PATH}")
@@ -1205,7 +1326,9 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
         and config.get("public_share_enabled")
         and digest_data_ready
     ):
-        write_report_artifacts(snapshots, failures, current_time, public_page_url)
+        write_report_artifacts(
+            snapshots, failures, current_time, public_page_url, theme=args.theme
+        )
         if not public_share_url or not public_image_url:
             share_publish_error = (
                 "已启用公开分享，但未同时配置 public_share_url 和 public_image_url"
@@ -1288,7 +1411,7 @@ def run(argv: list[str], *, now: Optional[datetime] = None) -> int:
             build_report(snapshots, failures, current_time), encoding="utf-8"
         )
         write_report_artifacts(
-            snapshots, failures, current_time, public_page_url
+            snapshots, failures, current_time, public_page_url, theme=args.theme
         )
 
     for failure in failures:
